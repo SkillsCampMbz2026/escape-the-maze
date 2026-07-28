@@ -23,7 +23,9 @@ const Monster = {
   ],
 
   HEIGHT: 2.05,        // world units, tuned against a 3.4-high wall
-  CATCH_RANGE: 1.15,
+  CATCH_RANGE: 1.35,
+  MAX_HEALTH: 100,
+  RESPAWN_DELAY: 7,    // seconds out of the game after you drop it
 
   loaded: false,
   ready: null,
@@ -156,6 +158,13 @@ const Monster = {
       path: null,
       ambushing: false,
       sees: false,
+      health: this.MAX_HEALTH,
+      dead: false,
+      dying: 0,
+      respawnIn: 0,
+      flinch: 0,
+      hurtAt: -99,
+      kills: 0,
       x: options.cell.x * options.tile + options.tile / 2,
       z: options.cell.y * options.tile + options.tile / 2,
       yaw: 0,
@@ -314,9 +323,65 @@ const Monster = {
     return ambush || chase;
   },
 
-  update(dt, player, onCatch) {
+  /* ---------- Taking damage ---------- */
+
+  /* Returns 'killed' | 'hurt' | null. `from` is the shot direction, used to
+     shove it back so hits read as impacts rather than nothing happening. */
+  damage(amount, from, now) {
     const s = this.state;
-    if (!s || s.caught) return;
+    if (!s || s.dead) return null;
+
+    s.health -= amount;
+    s.hurtAt = now;
+    s.flinch = 0.22;
+
+    if (from) {
+      const push = 0.35;
+      s.x += from.x * push;
+      s.z += from.z * push;
+    }
+
+    if (s.health <= 0) {
+      s.health = 0;
+      s.dead = true;
+      s.dying = 1.1;
+      s.respawnIn = this.RESPAWN_DELAY;
+      s.kills += 1;
+      s.path = null;
+      return 'killed';
+    }
+    return 'hurt';
+  },
+
+  /* Drops it out of play, then puts it back on the far side of the maze. */
+  respawn(playerCellX, playerCellZ) {
+    const s = this.state;
+    if (!s) return;
+
+    const fromPlayer = this.fieldFrom(s.maze, playerCellX, playerCellZ);
+    const cell = this.pickSpawn(s.maze, fromPlayer);
+
+    s.x = cell.x * s.tile + s.tile / 2;
+    s.z = cell.y * s.tile + s.tile / 2;
+    s.health = this.MAX_HEALTH;
+    s.dead = false;
+    s.dying = 0;
+    s.respawnIn = 0;
+    s.flinch = 0;
+    s.path = null;
+    s.grace = 1.6;                 // a moment to find its feet
+    s.body.visible = true;
+    s.body.position.set(s.x, 0, s.z);
+    if (s.inner) {
+      s.inner.rotation.x = 0;
+      s.inner.rotation.z = 0;
+      s.inner.position.y = s.baseY || s.inner.position.y;
+    }
+  },
+
+  update(dt, player, onContact, now) {
+    const s = this.state;
+    if (!s) return;
 
     const tile = s.tile;
     const maze = s.maze;
@@ -324,7 +389,29 @@ const Monster = {
     const playerCellZ = Math.floor(player.z / tile);
 
     s.distanceToPlayer = Math.hypot(player.x - s.x, player.z - s.z);
-    s.sees = this.clearLine(maze, tile, s.x, s.z, player.x, player.z);
+    s.sees = !s.dead && this.clearLine(maze, tile, s.x, s.z, player.x, player.z);
+
+    /* ---- dead: topple over, lie there, then come back somewhere else ---- */
+    if (s.dead) {
+      s.respawnIn -= dt;
+      if (s.dying > 0) {
+        s.dying -= dt;
+        const fall = 1 - Math.max(0, s.dying) / 1.1;
+        if (s.inner) {
+          s.inner.rotation.x = -fall * (Math.PI / 2);
+          s.inner.rotation.z = fall * 0.35;
+          s.inner.position.y = (s.baseY || 0) - fall * 0.25;
+        }
+        s.eyeLight.intensity = Math.max(0, 1.4 * (1 - fall));
+      } else {
+        s.body.visible = false;
+        s.eyeLight.intensity = 0;
+      }
+      if (s.respawnIn <= 0) this.respawn(playerCellX, playerCellZ);
+      return;
+    }
+
+    if (s.flinch > 0) s.flinch -= dt;
 
     if (s.grace > 0) {
       s.grace -= dt;
@@ -364,9 +451,9 @@ const Monster = {
       aim = { x: player.x, z: player.z };   // same tile as you: come straight in
     }
 
-    /* Charge when it can see you down a corridor. */
+    /* Charge when it can see you down a corridor; a fresh hit staggers it. */
     const charging = s.sees && s.distanceToPlayer < 16;
-    const speed = s.speed * (charging ? 1.22 : 1);
+    const speed = s.speed * (charging ? 1.22 : 1) * (s.flinch > 0 ? 0.25 : 1);
 
     let moved = 0;
     if (aim) {
@@ -396,10 +483,7 @@ const Monster = {
 
     this.animate(dt, moved);
 
-    if (s.distanceToPlayer < this.CATCH_RANGE) {
-      s.caught = true;
-      onCatch();
-    }
+    if (s.distanceToPlayer < this.CATCH_RANGE) onContact();
   },
 
   /* Procedural run cycle: legs counter-swing, knees fold on the backstroke,

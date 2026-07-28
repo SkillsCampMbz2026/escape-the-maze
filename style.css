@@ -139,6 +139,152 @@ html, body {
   border-radius: 50%;
 }
 
+/* ---------- Combat HUD ---------- */
+#hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  background:
+    linear-gradient(45deg, transparent 44%, #fff 44%, #fff 56%, transparent 56%),
+    linear-gradient(-45deg, transparent 44%, #fff 44%, #fff 56%, transparent 56%);
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+}
+
+#hitmarker.hitmarker--head {
+  background:
+    linear-gradient(45deg, transparent 42%, #fca5a5 42%, #fca5a5 58%, transparent 58%),
+    linear-gradient(-45deg, transparent 42%, #fca5a5 42%, #fca5a5 58%, transparent 58%);
+  transform: scale(1.35);
+}
+
+#monster-bar {
+  position: absolute;
+  left: 50%;
+  top: 12%;
+  transform: translateX(-50%);
+  width: 220px;
+  padding: 6px 10px 8px;
+  background: rgba(10, 14, 30, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.monster-bar__label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.58rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #fca5a5;
+}
+
+.monster-bar__track {
+  height: 7px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#monster-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #dc2626, #f87171);
+  transition: width 0.12s linear;
+}
+
+.loadout {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.vitals {
+  display: grid;
+  gap: 4px;
+  min-width: 170px;
+}
+
+.bar {
+  height: 11px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#health-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #16a34a, #4ade80);
+  transition: width 0.15s linear;
+}
+
+#health-fill.health--low {
+  background: linear-gradient(90deg, #b91c1c, #f87171);
+  animation: lowpulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes lowpulse { from { opacity: 0.7; } to { opacity: 1; } }
+
+.vitals__hp {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.vitals__hp b { color: var(--ink); font-size: 0.9rem; }
+
+.ammo-box,
+.kill-box {
+  margin-left: auto;
+  padding: 7px 12px;
+  text-align: right;
+  background: rgba(10, 14, 30, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.kill-box { margin-left: 0; }
+
+#ammo {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--amber);
+}
+
+.ammo-box__hint,
+.kill-box__label {
+  display: block;
+  font-size: 0.56rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#kills {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+#hurt {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(180, 20, 20, 0.1) 30%, rgba(190, 18, 18, 0.65) 100%);
+}
+
 /* ---------- Touch ---------- */
 #touch {
   position: fixed;
@@ -163,6 +309,45 @@ html, body {
   background: rgba(10, 14, 30, 0.35);
   touch-action: none;
 }
+
+#fire-btn,
+#reload-btn {
+  position: absolute;
+  right: 26px;
+  font-family: inherit;
+  font-weight: 800;
+  color: #fff;
+  border-radius: 50%;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#fire-btn {
+  bottom: 30px;
+  width: 96px;
+  height: 96px;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  background: rgba(190, 30, 30, 0.45);
+  border: 3px solid rgba(252, 165, 165, 0.7);
+}
+
+#fire-btn:active {
+  background: rgba(220, 38, 38, 0.85);
+  transform: scale(0.94);
+}
+
+#reload-btn {
+  bottom: 140px;
+  right: 44px;
+  width: 58px;
+  height: 58px;
+  font-size: 1.3rem;
+  background: rgba(10, 14, 30, 0.45);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+}
+
+#reload-btn:active { transform: scale(0.94); }
 
 #stick-knob {
   position: absolute;

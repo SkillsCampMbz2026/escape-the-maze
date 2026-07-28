@@ -55,7 +55,13 @@
     vx: 0, vz: 0,
     yaw: 0, pitch: 0,
     bob: 0,
+    health: 100,
+    hurtCooldown: 0,
+    kick: 0,          // camera punch when mauled
   };
+
+  const MAUL_DAMAGE = 34;      // three hits and you are down
+  const MAUL_COOLDOWN = 1.1;
 
   let maze = null;
   let world = null;
@@ -88,6 +94,16 @@
     touch: document.getElementById('touch'),
     danger: document.getElementById('danger'),
     warning: document.getElementById('warning'),
+    health: document.getElementById('health-fill'),
+    healthText: document.getElementById('health-text'),
+    ammo: document.getElementById('ammo'),
+    kills: document.getElementById('kills'),
+    hitmarker: document.getElementById('hitmarker'),
+    hurt: document.getElementById('hurt'),
+    monsterBar: document.getElementById('monster-bar'),
+    monsterFill: document.getElementById('monster-fill'),
+    fireBtn: document.getElementById('fire-btn'),
+    reloadBtn: document.getElementById('reload-btn'),
   };
   const mapCtx = el.minimap.getContext('2d');
 
@@ -148,6 +164,11 @@
     player.yaw = 0;
     player.pitch = 0;
     player.bob = 0;
+    player.health = 100;
+    player.hurtCooldown = 0;
+    player.kick = 0;
+    Weapon.reset();
+    el.kills.textContent = '0';
 
     // face the first open direction so you never start staring at a wall
     if (!maze.solid(maze.start.x + 1, maze.start.y)) player.yaw = -Math.PI / 2;
@@ -209,7 +230,7 @@
       EYE_HEIGHT + Math.sin(player.bob) * 0.045 * Math.min(1, pace / WALK),
       player.z,
     );
-    camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+    camera.rotation.set(player.pitch + player.kick, player.yaw, 0, 'YXZ');
 
     const gx = Math.floor(player.x / TILE);
     const gz = Math.floor(player.z / TILE);
@@ -287,6 +308,75 @@
     el.danger.style.opacity = '0';
     if (!coarse) Controls.requestLock();
     clock.getDelta();
+  }
+
+  /* ---------- Combat ---------- */
+
+  function flashHitmarker(headshot) {
+    el.hitmarker.classList.toggle('hitmarker--head', headshot);
+    el.hitmarker.classList.remove('hidden');
+    clearTimeout(flashHitmarker.timer);
+    flashHitmarker.timer = setTimeout(() => el.hitmarker.classList.add('hidden'), 130);
+  }
+
+  function shoot() {
+    if (mode !== 'playing') return;
+
+    const hunter = Monster.state;
+    const body = hunter && !hunter.dead ? hunter.body : null;
+    const before = Weapon.ammo;
+    const shot = Weapon.fire(THREE, camera, world.walls, body);
+
+    if (shot.dry) { Audio3D.blip('dry'); return; }
+    if (!shot.spent && before === Weapon.ammo) return;   // still on cooldown
+
+    Audio3D.blip('shot');
+    player.kick = Math.min(player.kick + 0.035, 0.08);
+
+    if (!shot.hit) return;
+
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    const result = Monster.damage(shot.damage, { x: direction.x, z: direction.z }, elapsed);
+
+    flashHitmarker(shot.headshot);
+    Audio3D.blip(shot.headshot ? 'headshot' : 'hit');
+
+    if (result === 'killed') {
+      Audio3D.blip('death');
+      el.kills.textContent = Monster.state.kills;
+    } else if (result === 'hurt') {
+      Audio3D.blip('pain');
+    }
+  }
+
+  /* The monster mauls rather than instantly kills, so a fight is winnable. */
+  function contact() {
+    if (mode !== 'playing' || player.hurtCooldown > 0) return;
+    player.hurtCooldown = MAUL_COOLDOWN;
+    player.health -= MAUL_DAMAGE;
+    player.kick = 0.16;
+    Audio3D.blip('hurt');
+
+    el.hurt.classList.remove('hidden');
+    setTimeout(() => el.hurt.classList.add('hidden'), 220);
+
+    // shoved back, so you get a chance to shoot your way out
+    const hunter = Monster.state;
+    if (hunter) {
+      const dx = player.x - hunter.x;
+      const dz = player.z - hunter.z;
+      const gap = Math.hypot(dx, dz) || 1;
+      const nextX = player.x + (dx / gap) * 0.9;
+      const nextZ = player.z + (dz / gap) * 0.9;
+      if (!blocked(nextX, player.z)) player.x = nextX;
+      if (!blocked(player.x, nextZ)) player.z = nextZ;
+    }
+
+    if (player.health <= 0) {
+      player.health = 0;
+      caught();
+    }
   }
 
   /* Caught: freeze the player, let the monster lunge into the camera for a
@@ -386,21 +476,38 @@
       world.shimmer.scale.setScalar(1 + Math.sin(time * 2.4) * 0.06);
       world.exitGlow.intensity = 2.2 + Math.sin(time * 3) * 0.5;
 
-      Monster.update(dt, player, caught);
+      Monster.update(dt, player, contact, elapsed);
+      Weapon.update(dt, Math.min(1, Math.hypot(player.vx, player.vz) / WALK));
+
+      player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
+      player.kick *= Math.exp(-dt * 9);
 
       /* Proximity feedback: you hear and see it coming before you meet it. */
       const hunter = Monster.state;
       if (hunter) {
-        const near = Audio3D.proximity(hunter.distanceToPlayer);
+        const alive = !hunter.dead;
+        const near = alive ? Audio3D.proximity(hunter.distanceToPlayer) : Audio3D.proximity(999);
         el.danger.style.opacity = (near * 0.85).toFixed(3);
-        el.warning.classList.toggle('hidden', !(hunter.grace <= 0 && hunter.distanceToPlayer < TILE * 3));
+        el.warning.classList.toggle('hidden',
+          !(alive && hunter.grace <= 0 && hunter.distanceToPlayer < TILE * 3));
 
         stepTimer -= dt;
-        if (stepTimer <= 0 && hunter.grace <= 0 && near > 0.12) {
+        if (stepTimer <= 0 && alive && hunter.grace <= 0 && near > 0.12) {
           stepTimer = 0.42;
           Audio3D.blip('step');
         }
+
+        /* Its health bar shows while you can see it, or just after a hit. */
+        const showBar = alive && (hunter.sees && hunter.distanceToPlayer < 24
+          || elapsed - hunter.hurtAt < 2.5);
+        el.monsterBar.classList.toggle('hidden', !showBar);
+        el.monsterFill.style.width = `${(hunter.health / Monster.MAX_HEALTH) * 100}%`;
       }
+
+      el.health.style.width = `${player.health}%`;
+      el.healthText.textContent = player.health;
+      el.health.classList.toggle('health--low', player.health <= 34);
+      el.ammo.textContent = Weapon.reloading > 0 ? 'RELOADING' : `${Weapon.ammo} / ${Weapon.MAG}`;
 
       const gap = Math.hypot(player.x - world.exitPosition.x, player.z - world.exitPosition.z);
       if (gap < 1.6) win();
@@ -435,6 +542,7 @@
   /* ---------- Wiring ---------- */
 
   Controls.init(canvas);
+  Weapon.build(THREE, camera);
   Controls.onLockChange = (locked) => {
     if (!locked && mode === 'playing' && !coarse) pause();
   };
@@ -468,6 +576,34 @@
 
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Escape' && mode === 'playing') pause();
+    if (event.code === 'KeyR' && mode === 'playing') {
+      if (Weapon.reload()) Audio3D.blip('reload');
+    }
+  });
+
+  /* Fire: mouse while the pointer is locked, or the on-screen button. */
+  canvas.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    if (mode === 'playing' && Controls.locked) shoot();
+  });
+
+  let autoFire = null;
+  const startFiring = (event) => {
+    event.preventDefault();
+    shoot();
+    clearInterval(autoFire);
+    autoFire = setInterval(shoot, 170);   // held button keeps firing
+  };
+  const stopFiring = () => { clearInterval(autoFire); autoFire = null; };
+
+  el.fireBtn.addEventListener('pointerdown', startFiring);
+  el.fireBtn.addEventListener('pointerup', stopFiring);
+  el.fireBtn.addEventListener('pointercancel', stopFiring);
+  el.fireBtn.addEventListener('pointerleave', stopFiring);
+
+  el.reloadBtn.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    if (Weapon.reload()) Audio3D.blip('reload');
   });
 
   window.addEventListener('resize', resize);

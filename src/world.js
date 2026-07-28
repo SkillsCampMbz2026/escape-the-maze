@@ -195,6 +195,8 @@ const World = {
     scene.background = sky;
 
     created.group = group;
+    created.walls = walls;        // shots are raycast against this for cover
+    created.floor = floor;
     created.portal = portal;
     created.shimmer = shimmer;
     created.exitGlow = exitGlow;

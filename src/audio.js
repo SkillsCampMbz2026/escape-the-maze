@@ -92,12 +92,90 @@ const Audio3D = {
     this.breathGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
   },
 
-  /* one-shot: 'step' | 'roar' | 'win' */
+  /* one-shot: 'step' | 'roar' | 'win' | 'shot' | 'dry' | 'reload' | 'hit'
+     | 'headshot' | 'pain' | 'death' | 'hurt' */
   blip(type) {
     if (!this.ready || !this.on) return;
     const now = this.ctx.currentTime;
     const gain = this.ctx.createGain();
     gain.connect(this.master);
+
+    /* --- gunfire: a hard noise crack over a short low thump --- */
+    if (type === 'shot') {
+      const crack = this.ctx.createBufferSource();
+      crack.buffer = this.noise;
+      const hp = this.ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 900;
+      crack.connect(hp);
+      hp.connect(gain);
+      gain.gain.setValueAtTime(0.6, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      crack.start(now);
+      crack.stop(now + 0.2);
+
+      const thump = this.ctx.createOscillator();
+      thump.type = 'sine';
+      thump.frequency.setValueAtTime(180, now);
+      thump.frequency.exponentialRampToValueAtTime(48, now + 0.14);
+      const thumpGain = this.ctx.createGain();
+      thumpGain.gain.setValueAtTime(0.5, now);
+      thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      thump.connect(thumpGain);
+      thumpGain.connect(this.master);
+      thump.start(now);
+      thump.stop(now + 0.2);
+      return;
+    }
+
+    if (type === 'dry' || type === 'reload') {
+      const click = this.ctx.createBufferSource();
+      click.buffer = this.noise;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = type === 'dry' ? 2600 : 1500;
+      bp.Q.value = 3;
+      click.connect(bp);
+      bp.connect(gain);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      click.start(now);
+      click.stop(now + 0.1);
+      return;
+    }
+
+    /* --- impacts and cries --- */
+    if (type === 'hit' || type === 'headshot') {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(type === 'headshot' ? 1500 : 900, now);
+      osc.frequency.exponentialRampToValueAtTime(type === 'headshot' ? 700 : 420, now + 0.07);
+      osc.connect(gain);
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.12);
+      return;
+    }
+
+    if (type === 'pain' || type === 'death' || type === 'hurt') {
+      const long = type !== 'pain';
+      const cry = this.ctx.createOscillator();
+      cry.type = 'sawtooth';
+      const top = type === 'hurt' ? 320 : 220;
+      cry.frequency.setValueAtTime(top, now);
+      cry.frequency.exponentialRampToValueAtTime(type === 'death' ? 38 : 90, now + (long ? 0.8 : 0.28));
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = type === 'hurt' ? 1400 : 700;
+      cry.connect(filter);
+      filter.connect(gain);
+      gain.gain.setValueAtTime(type === 'death' ? 0.5 : 0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + (long ? 0.95 : 0.32));
+      cry.start(now);
+      cry.stop(now + 1);
+      return;
+    }
 
     if (type === 'step' || type === 'roar') {
       const source = this.ctx.createBufferSource();
