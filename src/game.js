@@ -15,10 +15,13 @@
   const ACCEL = 14;
   const MAX_PITCH = Math.PI / 2 - 0.05;
 
+  /* Monster speed sits between walking (4.6) and sprinting (7.4): you cannot
+     stroll away from it, but you can outrun it if you know where you are
+     going. `grace` is the head start before it begins hunting. */
   const SIZES = {
-    small: { cols: 8, rows: 8, label: 'Small' },
-    medium: { cols: 13, rows: 13, label: 'Medium' },
-    large: { cols: 20, rows: 20, label: 'Large' },
+    small: { cols: 8, rows: 8, label: 'Small', hunter: 3.9, grace: 5 },
+    medium: { cols: 13, rows: 13, label: 'Medium', hunter: 4.5, grace: 4 },
+    large: { cols: 20, rows: 20, label: 'Large', hunter: 5.1, grace: 3.5 },
   };
 
   /* ---------- Renderer ---------- */
@@ -58,11 +61,13 @@
   let world = null;
   let distances = null;
   let visited = null;
-  let mode = 'menu';           // menu | playing | won
+  let mode = 'menu';           // menu | playing | paused | won | caught
   let startTime = 0;
   let elapsed = 0;
   let sizeKey = 'medium';
   let best = loadBest();
+  let deathTimer = 0;
+  let stepTimer = 0;
 
   const clock = new THREE.Clock();
 
@@ -81,6 +86,8 @@
     bestOut: document.getElementById('best'),
     minimap: document.getElementById('minimap'),
     touch: document.getElementById('touch'),
+    danger: document.getElementById('danger'),
+    warning: document.getElementById('warning'),
   };
   const mapCtx = el.minimap.getContext('2d');
 
@@ -112,12 +119,24 @@
 
   function newMaze() {
     if (world) world.dispose();
+    Monster.remove(scene);
 
     const size = SIZES[sizeKey];
     maze = Maze.generate(size.cols, size.rows);
     distances = Maze.distanceField(maze);
     visited = new Uint8Array(maze.width * maze.height);
     world = World.build(THREE, scene, maze, quality);
+
+    /* Put the monster as far from your start as the maze allows. */
+    if (Monster.loaded) {
+      const fromStart = Monster.fieldFrom(maze, maze.start.x, maze.start.y);
+      Monster.spawn(THREE, scene, maze, {
+        tile: TILE,
+        speed: size.hunter,
+        grace: size.grace,
+        cell: Monster.pickSpawn(maze, fromStart),
+      });
+    }
 
     player.x = maze.start.x * TILE + TILE / 2;
     player.z = maze.start.y * TILE + TILE / 2;
@@ -222,6 +241,16 @@
     mapCtx.fillStyle = '#4ade80';
     mapCtx.fillRect(maze.exit.x * cell - 1, maze.exit.y * cell - 1, cell + 2, cell + 2);
 
+    /* The monster only appears on the map once it is close — knowing exactly
+       where it always is would drain the tension out of the chase. */
+    const hunter = Monster.state;
+    if (hunter && hunter.distanceToPlayer < TILE * 7) {
+      mapCtx.fillStyle = '#f87171';
+      mapCtx.beginPath();
+      mapCtx.arc((hunter.x / TILE) * cell, (hunter.z / TILE) * cell, 3, 0, Math.PI * 2);
+      mapCtx.fill();
+    }
+
     // player, pointing the way they face
     const cx = (player.x / TILE) * cell;
     const cy = (player.z / TILE) * cell;
@@ -241,19 +270,50 @@
   /* ---------- Flow ---------- */
 
   function startRun() {
+    Audio3D.init();
+    Audio3D.resume();
     newMaze();
     mode = 'playing';
     startTime = performance.now();
     elapsed = 0;
+    deathTimer = 0;
     el.overlay.classList.add('hidden');
+    el.overlay.classList.remove('overlay--dead');
     el.hud.classList.remove('hidden');
     el.touch.classList.toggle('hidden', !coarse);
+    el.danger.style.opacity = '0';
     if (!coarse) Controls.requestLock();
     clock.getDelta();
   }
 
+  /* Caught: freeze the player, let the monster lunge into the camera for a
+     beat, then show the panel. */
+  function caught() {
+    if (mode !== 'playing') return;
+    mode = 'caught';
+    deathTimer = 1.5;
+    Audio3D.blip('roar');
+    if (document.exitPointerLock) document.exitPointerLock();
+    el.danger.style.opacity = '1';
+    el.warning.classList.add('hidden');
+  }
+
+  function showCaughtPanel() {
+    Audio3D.silence();
+    el.title.textContent = '💀 Caught';
+    el.text.innerHTML = `The monster found you after <b>${formatTime(elapsed)}</b>.`;
+    el.play.textContent = 'Try again';
+    el.overlay.classList.remove('hidden');
+    el.overlay.classList.add('overlay--dead');
+    el.hud.classList.add('hidden');
+    el.touch.classList.add('hidden');
+    el.danger.style.opacity = '0';
+  }
+
   function win() {
     mode = 'won';
+    Audio3D.silence();
+    Audio3D.blip('win');
     const seconds = elapsed;
     const record = best[sizeKey];
     const isRecord = record === undefined || seconds < record;
@@ -269,16 +329,20 @@
       : `<b>${formatTime(seconds)}</b> · best ${formatTime(record)}`;
     el.play.textContent = 'New maze';
     el.overlay.classList.remove('hidden');
+    el.overlay.classList.remove('overlay--dead');
     el.hud.classList.add('hidden');
     el.touch.classList.add('hidden');
+    el.danger.style.opacity = '0';
+    el.warning.classList.add('hidden');
     renderBest();
   }
 
   function pause() {
     if (mode !== 'playing') return;
     mode = 'paused';
+    Audio3D.silence();
     el.title.textContent = 'Paused';
-    el.text.textContent = 'Find the green gate to escape.';
+    el.text.textContent = 'Something is hunting you. Find the green gate.';
     el.play.textContent = 'Resume';
     el.overlay.classList.remove('hidden');
   }
@@ -319,6 +383,22 @@
       world.shimmer.scale.setScalar(1 + Math.sin(time * 2.4) * 0.06);
       world.exitGlow.intensity = 2.2 + Math.sin(time * 3) * 0.5;
 
+      Monster.update(dt, player, caught);
+
+      /* Proximity feedback: you hear and see it coming before you meet it. */
+      const hunter = Monster.state;
+      if (hunter) {
+        const near = Audio3D.proximity(hunter.distanceToPlayer);
+        el.danger.style.opacity = (near * 0.85).toFixed(3);
+        el.warning.classList.toggle('hidden', !(hunter.grace <= 0 && hunter.distanceToPlayer < TILE * 3));
+
+        stepTimer -= dt;
+        if (stepTimer <= 0 && hunter.grace <= 0 && near > 0.12) {
+          stepTimer = 0.42;
+          Audio3D.blip('step');
+        }
+      }
+
       const gap = Math.hypot(player.x - world.exitPosition.x, player.z - world.exitPosition.z);
       if (gap < 1.6) win();
 
@@ -326,6 +406,24 @@
       const tiles = distances[Math.floor(player.z / TILE) * maze.width + Math.floor(player.x / TILE)];
       el.distance.textContent = tiles >= 0 ? `${tiles} tiles` : '—';
       drawMinimap();
+    } else if (mode === 'caught') {
+      Monster.lunge(dt, camera);
+      // look at what got you
+      const s = Monster.state;
+      if (s) {
+        const want = Math.atan2(-(s.x - player.x), -(s.z - player.z));
+        let delta = want - player.yaw;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        player.yaw += delta * Math.min(1, dt * 6);
+        player.pitch += (0.1 - player.pitch) * Math.min(1, dt * 4);
+        camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+      }
+      deathTimer -= dt;
+      if (deathTimer <= 0) {
+        mode = 'dead';
+        showCaughtPanel();
+      }
     }
 
     renderer.render(scene, camera);
@@ -337,6 +435,18 @@
   Controls.onLockChange = (locked) => {
     if (!locked && mode === 'playing' && !coarse) pause();
   };
+
+  /* The model has to be in before a run can start. */
+  el.play.disabled = true;
+  el.play.textContent = 'Waking the monster…';
+  Monster.load(THREE, 'assets/blue_monster.glb').then(() => {
+    el.play.disabled = false;
+    el.play.textContent = 'Enter the maze';
+  }).catch((error) => {
+    console.error('monster failed to load', error);
+    el.play.disabled = false;
+    el.play.textContent = 'Enter the maze (no monster)';
+  });
 
   el.play.addEventListener('click', () => {
     if (mode === 'paused') resume();

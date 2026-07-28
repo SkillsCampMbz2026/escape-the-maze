@@ -33,6 +33,50 @@ html, body {
 
 .hidden { display: none !important; }
 
+/* ---------- Danger feedback ---------- */
+#danger {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s linear;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 40%, rgba(120, 10, 14, 0.55) 78%, rgba(150, 12, 16, 0.85) 100%);
+}
+
+#warning {
+  position: fixed;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: #fecaca;
+  background: rgba(90, 8, 12, 0.7);
+  border: 1px solid #ef4444;
+  border-radius: 999px;
+  pointer-events: none;
+  animation: pulse 0.7s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from { opacity: 0.55; transform: translateX(-50%) scale(1); }
+  to   { opacity: 1;    transform: translateX(-50%) scale(1.05); }
+}
+
+#overlay.overlay--dead {
+  background: radial-gradient(circle at 50% 30%, rgba(92, 12, 18, 0.9), rgba(14, 4, 6, 0.96));
+}
+
+#overlay.overlay--dead #panel { border-color: #7f1d1d; }
+#overlay.overlay--dead #panel-text b { color: #fca5a5; }
+
+.play:disabled {
+  filter: grayscale(0.6);
+  cursor: progress;
+}
+
 /* ---------- HUD ---------- */
 #hud {
   position: fixed;

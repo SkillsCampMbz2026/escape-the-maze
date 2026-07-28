@@ -10,6 +10,10 @@
 
   <canvas id="view"></canvas>
 
+  <!-- proximity vignette: swells red as the monster closes in -->
+  <div id="danger"></div>
+  <div id="warning" class="hidden">IT IS RIGHT BEHIND YOU</div>
+
   <!-- heads-up display -->
   <div id="hud" class="hidden">
     <div class="readouts">
@@ -31,7 +35,7 @@
   <div id="overlay">
     <div id="panel">
       <h1 id="panel-title">Escape the Maze</h1>
-      <p id="panel-text">You are dropped in a maze at night. Find the glowing green gate.</p>
+      <p id="panel-text">You are dropped in a maze at night — and something is in here with you. Find the glowing green gate before it finds you.</p>
 
       <div id="sizes" class="sizes">
         <button data-size="small">Small</button>
@@ -52,9 +56,12 @@
   </div>
 
   <script src="vendor/three.min.js"></script>
+  <script src="vendor/GLTFLoader.js"></script>
   <script src="src/maze.js"></script>
   <script src="src/world.js"></script>
   <script src="src/controls.js"></script>
+  <script src="src/audio.js"></script>
+  <script src="src/monster.js"></script>
   <script src="src/game.js"></script>
 </body>
 </html>
