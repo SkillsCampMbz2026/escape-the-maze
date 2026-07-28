@@ -1,0 +1,242 @@
+:root {
+  --ink: #e8ecf8;
+  --muted: #9aa6c4;
+  --line: #2f3a58;
+  --panel: rgba(10, 14, 30, 0.9);
+  --green: #4ade80;
+  --amber: #fbbf24;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #080b16;
+  color: var(--ink);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#view {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- HUD ---------- */
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.readouts {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.readout {
+  display: grid;
+  gap: 1px;
+  padding: 7px 12px;
+  background: rgba(10, 14, 30, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+}
+
+.readout__label {
+  font-size: 0.6rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.readout__value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#minimap {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 168px;
+  height: auto;
+  image-rendering: pixelated;
+  background: rgba(8, 12, 24, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+#reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+}
+
+/* ---------- Touch ---------- */
+#touch {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+}
+
+#look-area {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+#stick {
+  position: absolute;
+  left: 26px;
+  bottom: 26px;
+  width: 118px;
+  height: 118px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: rgba(10, 14, 30, 0.35);
+  touch-action: none;
+}
+
+#stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  background: rgba(226, 232, 255, 0.45);
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* ---------- Overlay ---------- */
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: radial-gradient(circle at 50% 30%, rgba(28, 39, 72, 0.85), rgba(6, 9, 20, 0.95));
+  backdrop-filter: blur(3px);
+}
+
+#panel {
+  width: 100%;
+  max-width: 420px;
+  padding: 26px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+#panel-title {
+  font-size: 1.7rem;
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+#panel-text {
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+#panel-text b { color: var(--green); }
+
+.sizes {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.sizes button {
+  flex: 1;
+  padding: 9px 6px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sizes button:hover { color: var(--ink); background: rgba(255, 255, 255, 0.05); }
+
+.sizes button.on {
+  color: #06210f;
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.play {
+  width: 100%;
+  padding: 14px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #06210f;
+  background: var(--green);
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.play:hover { filter: brightness(1.08); }
+
+.keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  justify-content: center;
+  margin-top: 18px;
+  list-style: none;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.keys b { color: var(--ink); }
+
+.note {
+  margin-top: 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+@media (max-width: 560px) {
+  #minimap { width: 108px; }
+  .readouts { gap: 6px; }
+  .readout { padding: 5px 9px; }
+  .readout__value { font-size: 0.9rem; }
+}

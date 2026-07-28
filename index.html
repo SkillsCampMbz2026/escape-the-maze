@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Escape the Maze</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <canvas id="view"></canvas>
+
+  <!-- heads-up display -->
+  <div id="hud" class="hidden">
+    <div class="readouts">
+      <div class="readout"><span class="readout__label">Time</span><span class="readout__value" id="timer">0:00.0</span></div>
+      <div class="readout"><span class="readout__label">Exit</span><span class="readout__value" id="distance">—</span></div>
+      <div class="readout"><span class="readout__label">Best</span><span class="readout__value" id="best">--:--</span></div>
+    </div>
+    <canvas id="minimap"></canvas>
+    <div id="reticle"></div>
+  </div>
+
+  <!-- touch controls -->
+  <div id="touch" class="hidden">
+    <div id="look-area"></div>
+    <div id="stick"><div id="stick-knob"></div></div>
+  </div>
+
+  <!-- menu / pause / win -->
+  <div id="overlay">
+    <div id="panel">
+      <h1 id="panel-title">Escape the Maze</h1>
+      <p id="panel-text">You are dropped in a maze at night. Find the glowing green gate.</p>
+
+      <div id="sizes" class="sizes">
+        <button data-size="small">Small</button>
+        <button data-size="medium" class="on">Medium</button>
+        <button data-size="large">Large</button>
+      </div>
+
+      <button id="play" class="play">Enter the maze</button>
+
+      <ul class="keys">
+        <li><b>W A S D</b> move</li>
+        <li><b>Mouse</b> look</li>
+        <li><b>Shift</b> run</li>
+        <li><b>Esc</b> pause</li>
+      </ul>
+      <p class="note">On a phone: left thumbstick to move, drag anywhere else to look.</p>
+    </div>
+  </div>
+
+  <script src="vendor/three.min.js"></script>
+  <script src="src/maze.js"></script>
+  <script src="src/world.js"></script>
+  <script src="src/controls.js"></script>
+  <script src="src/game.js"></script>
+</body>
+</html>
