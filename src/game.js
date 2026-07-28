@@ -19,9 +19,9 @@
      stroll away from it, but you can outrun it if you know where you are
      going. `grace` is the head start before it begins hunting. */
   const SIZES = {
-    small: { cols: 8, rows: 8, label: 'Small', hunter: 3.9, grace: 5 },
-    medium: { cols: 13, rows: 13, label: 'Medium', hunter: 4.5, grace: 4 },
-    large: { cols: 20, rows: 20, label: 'Large', hunter: 5.1, grace: 3.5 },
+    small: { cols: 8, rows: 8, label: 'Small', hunter: 3.9, grace: 5, intercept: false },
+    medium: { cols: 13, rows: 13, label: 'Medium', hunter: 4.5, grace: 4, intercept: true },
+    large: { cols: 20, rows: 20, label: 'Large', hunter: 5.1, grace: 3.5, intercept: true },
   };
 
   /* ---------- Renderer ---------- */
@@ -135,6 +135,9 @@
         speed: size.hunter,
         grace: size.grace,
         cell: Monster.pickSpawn(maze, fromStart),
+        exitField: distances,      // it knows the maze as well as the maze does
+        intercept: size.intercept,
+        playerSpeed: (WALK + SPRINT) / 2,
       });
     }
 

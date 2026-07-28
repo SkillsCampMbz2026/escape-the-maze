@@ -148,6 +148,14 @@ const Monster = {
       speed: options.speed,
       grace: options.grace,
       cell: options.cell,
+      /* Full knowledge of the maze: distances to the exit, so it can work out
+         your likely route and get in front of it. */
+      exitField: options.exitField,
+      intercept: options.intercept !== false,
+      playerSpeed: options.playerSpeed || 5.2,
+      path: null,
+      ambushing: false,
+      sees: false,
       x: options.cell.x * options.tile + options.tile / 2,
       z: options.cell.y * options.tile + options.tile / 2,
       yaw: 0,
@@ -211,15 +219,112 @@ const Monster = {
     return field;
   },
 
+  /* Walk a field downhill from a cell, giving the whole route as tile centres.
+     Because the maze is perfect, downhill is unique — this is *the* shortest
+     path, not an approximation of one. */
+  tracePath(maze, field, fromX, fromY, tile) {
+    const path = [];
+    let x = fromX;
+    let y = fromY;
+    let steps = field[y * maze.width + x];
+    if (steps < 0) return path;
+
+    let guard = maze.width * maze.height;
+    while (steps > 0 && guard-- > 0) {
+      let moved = false;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + [1, -1, 0, 0][d];
+        const ny = y + [0, 0, 1, -1][d];
+        if (nx < 0 || ny < 0 || nx >= maze.width || ny >= maze.height) continue;
+        if (field[ny * maze.width + nx] !== steps - 1) continue;
+        x = nx;
+        y = ny;
+        steps -= 1;
+        path.push({ x: x * tile + tile / 2, z: y * tile + tile / 2, cx: x, cy: y });
+        moved = true;
+        break;
+      }
+      if (!moved) break;
+    }
+    return path;
+  },
+
+  /* Is the straight line between two points clear of walls, allowing for the
+     monster's width? Used to cut corners instead of pacing tile to tile. */
+  clearLine(maze, tile, x1, z1, x2, z2) {
+    const dx = x2 - x1;
+    const dz = z2 - z1;
+    const span = Math.hypot(dx, dz);
+    const steps = Math.ceil(span / 0.3);
+    const r = 0.5;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const px = x1 + dx * t;
+      const pz = z1 + dz * t;
+      for (let corner = 0; corner < 4; corner++) {
+        const ox = corner & 1 ? r : -r;
+        const oz = corner & 2 ? r : -r;
+        if (maze.solid(Math.floor((px + ox) / tile), Math.floor((pz + oz) / tile))) return false;
+      }
+    }
+    return true;
+  },
+
+  /* Where to head for. Straight chasing always aims at where you are now; a
+     hunter that knows the maze aims at where you are going to be. We walk
+     your likely route to the exit and compare arrival times tile by tile —
+     the furthest point it can reach before you becomes an ambush. */
+  chooseTarget(s, playerCellX, playerCellZ) {
+    const maze = s.maze;
+    const chase = { x: playerCellX, y: playerCellZ, ambush: false };
+    if (!s.intercept || !s.exitField) return chase;
+
+    const fromMonster = this.fieldFrom(maze, Math.floor(s.x / s.tile), Math.floor(s.z / s.tile));
+    const HORIZON = 22;
+    const playerPace = s.tile / s.playerSpeed;
+    const monsterPace = s.tile / s.speed;
+
+    let x = playerCellX;
+    let y = playerCellZ;
+    let ambush = null;
+
+    for (let k = 1; k <= HORIZON; k++) {
+      const here = s.exitField[y * maze.width + x];
+      if (here <= 0) break;
+
+      let stepped = false;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + [1, -1, 0, 0][d];
+        const ny = y + [0, 0, 1, -1][d];
+        if (nx < 0 || ny < 0 || nx >= maze.width || ny >= maze.height) continue;
+        if (s.exitField[ny * maze.width + nx] !== here - 1) continue;
+        x = nx;
+        y = ny;
+        stepped = true;
+        break;
+      }
+      if (!stepped) break;
+
+      const reach = fromMonster[y * maze.width + x];
+      if (reach < 0) continue;
+      // beat them there with a little to spare, or it is not an ambush
+      if (reach * monsterPace <= k * playerPace - 0.35) ambush = { x, y, ambush: true };
+    }
+
+    return ambush || chase;
+  },
+
   update(dt, player, onCatch) {
     const s = this.state;
     if (!s || s.caught) return;
 
     const tile = s.tile;
+    const maze = s.maze;
     const playerCellX = Math.floor(player.x / tile);
     const playerCellZ = Math.floor(player.z / tile);
 
     s.distanceToPlayer = Math.hypot(player.x - s.x, player.z - s.z);
+    s.sees = this.clearLine(maze, tile, s.x, s.z, player.x, player.z);
 
     if (s.grace > 0) {
       s.grace -= dt;
@@ -227,61 +332,59 @@ const Monster = {
       return;
     }
 
-    /* Re-path a few times a second, or the moment you change tile. */
+    /* Re-plan a few times a second, and immediately if you change tile. */
     s.repathIn -= dt;
-    if (!s.field || s.repathIn <= 0 || s.lastPlayerCell !== playerCellZ * s.maze.width + playerCellX) {
-      s.field = this.fieldFrom(s.maze, playerCellX, playerCellZ);
-      s.lastPlayerCell = playerCellZ * s.maze.width + playerCellX;
-      s.repathIn = 0.3;
-      s.target = null;
+    const playerCell = playerCellZ * maze.width + playerCellX;
+    if (!s.path || s.repathIn <= 0 || s.lastPlayerCell !== playerCell) {
+      const target = this.chooseTarget(s, playerCellX, playerCellZ);
+      s.ambushing = target.ambush;
+      const field = this.fieldFrom(maze, target.x, target.y);
+      s.path = this.tracePath(maze, field, Math.floor(s.x / tile), Math.floor(s.z / tile), tile);
+      s.lastPlayerCell = playerCell;
+      s.repathIn = 0.25;
     }
 
-    /* Pick the neighbouring tile closest to the player. */
-    if (!s.target) {
-      const cx = Math.floor(s.x / tile);
-      const cz = Math.floor(s.z / tile);
-      let bestCell = null;
-      let bestDistance = s.field[cz * s.maze.width + cx];
-      if (bestDistance < 0) bestDistance = Infinity;
-
-      for (let d = 0; d < 4; d++) {
-        const nx = cx + [1, -1, 0, 0][d];
-        const ny = cz + [0, 0, 1, -1][d];
-        if (nx < 0 || ny < 0 || nx >= s.maze.width || ny >= s.maze.height) continue;
-        const value = s.field[ny * s.maze.width + nx];
-        if (value < 0 || value >= bestDistance) continue;
-        bestDistance = value;
-        bestCell = { x: nx, y: ny };
-      }
-
-      if (bestCell) {
-        s.target = {
-          x: bestCell.x * tile + tile / 2,
-          z: bestCell.y * tile + tile / 2,
-        };
-      }
+    /* Retire waypoints as they are reached. */
+    while (s.path.length && Math.hypot(s.path[0].x - s.x, s.path[0].z - s.z) < 0.4) {
+      s.path.shift();
     }
 
-    /* Walk toward the target tile centre. */
+    /* Aim at the furthest waypoint still in clear line of sight, so it cuts
+       corners and sweeps through junctions instead of stepping tile to tile. */
+    let aim = null;
+    if (s.path.length) {
+      aim = s.path[0];
+      for (let i = Math.min(s.path.length - 1, 5); i >= 1; i--) {
+        if (this.clearLine(maze, tile, s.x, s.z, s.path[i].x, s.path[i].z)) {
+          aim = s.path[i];
+          break;
+        }
+      }
+    } else if (s.distanceToPlayer > 0.3) {
+      aim = { x: player.x, z: player.z };   // same tile as you: come straight in
+    }
+
+    /* Charge when it can see you down a corridor. */
+    const charging = s.sees && s.distanceToPlayer < 16;
+    const speed = s.speed * (charging ? 1.22 : 1);
+
     let moved = 0;
-    if (s.target) {
-      const dx = s.target.x - s.x;
-      const dz = s.target.z - s.z;
+    if (aim) {
+      const dx = aim.x - s.x;
+      const dz = aim.z - s.z;
       const gap = Math.hypot(dx, dz);
-      if (gap < 0.12) {
-        s.target = null;
-      } else {
-        const step = Math.min(gap, s.speed * dt);
+      if (gap > 0.001) {
+        const step = Math.min(gap, speed * dt);
         s.x += (dx / gap) * step;
         s.z += (dz / gap) * step;
         moved = step / Math.max(dt, 0.0001);
 
-        // turn toward travel; the model faces +Z, so yaw is atan2(dx, dz)
+        // the model faces +Z, so yaw is atan2(dx, dz)
         const want = Math.atan2(dx, dz);
         let delta = want - s.yaw;
         while (delta > Math.PI) delta -= Math.PI * 2;
         while (delta < -Math.PI) delta += Math.PI * 2;
-        s.yaw += delta * Math.min(1, dt * 7);
+        s.yaw += delta * Math.min(1, dt * 8);
       }
     }
 
