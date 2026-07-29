@@ -7,17 +7,14 @@
    works for the session, it just does not survive a reload. */
 
 const Scores = {
-  KEY: 'escape-maze-scores-v1',
+  KEY: 'escape-maze-scores-v2',
   LIMIT: 10,
   data: null,
 
+  /* Tables are keyed by "<world>-<size>", created on demand, so adding a
+     world never needs a schema change. */
   blank() {
-    return {
-      version: 1,
-      name: 'Player',
-      runs: { small: [], medium: [], large: [] },
-      deaths: { small: 0, medium: 0, large: 0 },
-    };
+    return { version: 2, name: 'Player', runs: {}, deaths: {} };
   },
 
   load() {
@@ -30,11 +27,11 @@ const Scores = {
 
     this.data = this.blank();
     if (saved && saved.runs) {
-      ['small', 'medium', 'large'].forEach((size) => {
-        if (Array.isArray(saved.runs[size])) this.data.runs[size] = saved.runs[size];
-        if (saved.deaths && typeof saved.deaths[size] === 'number') {
-          this.data.deaths[size] = saved.deaths[size];
-        }
+      Object.keys(saved.runs).forEach((key) => {
+        if (Array.isArray(saved.runs[key])) this.data.runs[key] = saved.runs[key];
+      });
+      Object.keys(saved.deaths || {}).forEach((key) => {
+        if (typeof saved.deaths[key] === 'number') this.data.deaths[key] = saved.deaths[key];
       });
       if (typeof saved.name === 'string' && saved.name.trim()) this.data.name = saved.name;
     } else {
@@ -43,9 +40,32 @@ const Scores = {
     return this.data;
   },
 
-  /* Earlier builds kept a single fastest time per size under 'maze-best'.
-     Carry those over so nobody loses a record they already set. */
+  /* Two older shapes to carry forward, so nobody loses a record: the v1
+     leaderboard keyed by bare size, and before that a single fastest time per
+     size under 'maze-best'. Both belonged to what is now world 1. */
   migrate() {
+    const sizes = ['small', 'medium', 'large'];
+
+    let v1 = null;
+    try {
+      v1 = JSON.parse(localStorage.getItem('escape-maze-scores-v1'));
+    } catch {
+      v1 = null;
+    }
+    if (v1 && v1.runs) {
+      sizes.forEach((size) => {
+        if (Array.isArray(v1.runs[size]) && v1.runs[size].length) {
+          this.data.runs[`w1-${size}`] = v1.runs[size].slice(0, this.LIMIT);
+        }
+        if (v1.deaths && typeof v1.deaths[size] === 'number') {
+          this.data.deaths[`w1-${size}`] = v1.deaths[size];
+        }
+      });
+      if (typeof v1.name === 'string' && v1.name.trim()) this.data.name = v1.name;
+      this.save();
+      return;
+    }
+
     let legacy = null;
     try {
       legacy = JSON.parse(localStorage.getItem('maze-best'));
@@ -54,12 +74,17 @@ const Scores = {
     }
     if (!legacy || typeof legacy !== 'object') return;
 
-    ['small', 'medium', 'large'].forEach((size) => {
+    sizes.forEach((size) => {
       const time = legacy[size];
       if (typeof time !== 'number') return;
-      this.data.runs[size].push({ name: 'Player', time, kills: 0, at: Date.now(), legacy: true });
+      this.table(`w1-${size}`).push({ name: 'Player', time, kills: 0, at: Date.now(), legacy: true });
     });
     this.save();
+  },
+
+  table(key) {
+    if (!Array.isArray(this.data.runs[key])) this.data.runs[key] = [];
+    return this.data.runs[key];
   },
 
   save() {
@@ -83,14 +108,14 @@ const Scores = {
   },
 
   /* Returns the 1-based rank, or null if the run did not make the table. */
-  add(size, time, kills) {
-    const table = this.data.runs[size];
+  add(key, time, kills) {
+    const table = this.table(key);
     const entry = { name: this.data.name, time, kills, at: Date.now() };
 
     table.push(entry);
     table.sort((a, b) => a.time - b.time);
     const index = table.indexOf(entry);
-    this.data.runs[size] = table.slice(0, this.LIMIT);
+    this.data.runs[key] = table.slice(0, this.LIMIT);
     this.save();
 
     entry.rank = index + 1;
@@ -105,28 +130,34 @@ const Scores = {
     return clean;
   },
 
-  recordDeath(size) {
-    this.data.deaths[size] = (this.data.deaths[size] || 0) + 1;
+  recordDeath(key) {
+    this.data.deaths[key] = (this.data.deaths[key] || 0) + 1;
     this.save();
   },
 
-  top(size) {
-    return this.data.runs[size] || [];
+  top(key) {
+    return this.data.runs[key] || [];
   },
 
-  best(size) {
-    const table = this.top(size);
+  best(key) {
+    const table = this.top(key);
     return table.length ? table[0].time : null;
   },
 
-  deaths(size) {
-    return this.data.deaths[size] || 0;
+  deaths(key) {
+    return this.data.deaths[key] || 0;
   },
 
-  clear(size) {
-    if (size) {
-      this.data.runs[size] = [];
-      this.data.deaths[size] = 0;
+  /* Has this world ever been escaped? Used to gate the harder one. */
+  escapedWorld(worldId) {
+    return Object.keys(this.data.runs)
+      .some((key) => key.startsWith(`${worldId}-`) && this.data.runs[key].length > 0);
+  },
+
+  clear(key) {
+    if (key) {
+      this.data.runs[key] = [];
+      this.data.deaths[key] = 0;
     } else {
       this.data = this.blank();
     }

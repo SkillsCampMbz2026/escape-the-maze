@@ -1,126 +1,189 @@
-/* The gun: a viewmodel welded to the camera, and hitscan fire.
+/* Three guns, all hitscan.
 
-   Shots are a raycast from the centre of the screen against the wall mesh and
-   the monster together. Whichever is hit *first* wins, so walls give real
-   cover — you cannot shoot through a corner. Hits that land on a node named
-   Head count double. */
+   A shot raycasts against the wall mesh and every monster together, so the
+   nearest thing wins and walls give real cover. The shotgun fires a cone of
+   pellets, each traced separately. Viewmodels are built once and shown or
+   hidden on switch, so swapping weapons costs nothing. */
 
-const Weapon = {
-  RANGE: 44,
-  MAG: 8,
-  RELOAD_TIME: 1.25,
-  BODY_DAMAGE: 22,
-  HEAD_MULTIPLIER: 2.4,
-  FIRE_DELAY: 0.16,
+const Guns = {
+  LIST: [
+    {
+      id: 'pistol', name: 'Sidearm', key: '1',
+      mag: 8, damage: 22, pellets: 1, spread: 0,
+      delay: 0.16, reload: 1.2, auto: false, headMultiplier: 2.4, range: 46,
+    },
+    {
+      id: 'shotgun', name: 'Breacher', key: '2',
+      mag: 5, damage: 9, pellets: 8, spread: 0.06,
+      delay: 0.72, reload: 2.1, auto: false, headMultiplier: 1.6, range: 26,
+    },
+    {
+      id: 'smg', name: 'Stutter', key: '3',
+      mag: 28, damage: 11, pellets: 1, spread: 0.014,
+      delay: 0.085, reload: 1.5, auto: true, headMultiplier: 2, range: 40,
+    },
+  ],
 
-  ammo: 8,
+  current: 0,
+  ammo: [],
   reloading: 0,
   cooldown: 0,
   recoil: 0,
   sway: 0,
+  models: [],
+
+  get spec() {
+    return this.LIST[this.current];
+  },
+
+  /* ---------- Viewmodels ---------- */
 
   build(THREE, camera) {
-    const gun = new THREE.Group();
+    this.raycaster = new THREE.Raycaster();
+    this.rest = new THREE.Vector3(0.19, -0.17, -0.34);
 
     const steel = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.45, metalness: 0.85 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x14171d, roughness: 0.7, metalness: 0.4 });
-    const grip = new THREE.MeshStandardMaterial({ color: 0x3a2b22, roughness: 0.9, metalness: 0.1 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0x3a2b22, roughness: 0.9, metalness: 0.1 });
 
-    const add = (geometry, material, x, y, z, rx = 0) => {
-      const mesh = new THREE.Mesh(geometry, material);
+    const box = (group, w, h, d, material, x, y, z, rx = 0) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
       mesh.position.set(x, y, z);
       mesh.rotation.x = rx;
-      gun.add(mesh);
+      group.add(mesh);
       return mesh;
     };
 
-    add(new THREE.BoxGeometry(0.09, 0.1, 0.42), steel, 0, 0, -0.1);          // receiver
-    add(new THREE.BoxGeometry(0.05, 0.05, 0.46), dark, 0, 0.012, -0.42);     // barrel
-    add(new THREE.BoxGeometry(0.075, 0.16, 0.1), grip, 0, -0.11, 0.05, 0.22); // grip
-    add(new THREE.BoxGeometry(0.06, 0.13, 0.07), dark, 0, -0.075, -0.12);    // magazine
-    add(new THREE.BoxGeometry(0.018, 0.03, 0.02), dark, 0, 0.062, -0.6);     // front sight
-    add(new THREE.BoxGeometry(0.05, 0.018, 0.09), steel, 0, 0.058, -0.02);   // rail
+    this.LIST.forEach((spec, index) => {
+      const gun = new THREE.Group();
 
-    this.muzzle = new THREE.Object3D();
-    this.muzzle.position.set(0, 0.012, -0.66);
-    gun.add(this.muzzle);
+      if (spec.id === 'pistol') {
+        box(gun, 0.09, 0.10, 0.42, steel, 0, 0, -0.10);
+        box(gun, 0.05, 0.05, 0.46, dark, 0, 0.012, -0.42);
+        box(gun, 0.075, 0.16, 0.10, wood, 0, -0.11, 0.05, 0.22);
+        box(gun, 0.06, 0.13, 0.07, dark, 0, -0.075, -0.12);
+        box(gun, 0.018, 0.03, 0.02, dark, 0, 0.062, -0.60);
+        gun.userData.muzzle = new THREE.Vector3(0, 0.012, -0.66);
+      } else if (spec.id === 'shotgun') {
+        box(gun, 0.13, 0.12, 0.5, wood, 0, -0.01, 0.02);                 // stock/body
+        box(gun, 0.055, 0.055, 0.72, dark, -0.032, 0.03, -0.5);          // barrel L
+        box(gun, 0.055, 0.055, 0.72, dark, 0.032, 0.03, -0.5);           // barrel R
+        box(gun, 0.11, 0.05, 0.18, steel, 0, -0.045, -0.3);              // pump
+        box(gun, 0.08, 0.15, 0.1, wood, 0, -0.12, 0.12, 0.26);           // grip
+        gun.userData.muzzle = new THREE.Vector3(0, 0.03, -0.88);
+      } else {
+        box(gun, 0.10, 0.11, 0.34, steel, 0, 0, -0.06);
+        box(gun, 0.042, 0.042, 0.4, dark, 0, 0.02, -0.36);
+        box(gun, 0.06, 0.22, 0.075, dark, 0, -0.13, -0.02);              // long mag
+        box(gun, 0.075, 0.14, 0.1, dark, 0, -0.1, 0.12, 0.3);            // grip
+        box(gun, 0.05, 0.06, 0.2, steel, 0, 0.02, 0.2);                  // stock
+        gun.userData.muzzle = new THREE.Vector3(0, 0.02, -0.58);
+      }
 
-    /* flash: a bright cross that pops for a couple of frames */
-    const flashMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffe9a8, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+      const flash = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.36, 0.36),
+        new THREE.MeshBasicMaterial({
+          color: 0xffe9a8, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+        }),
+      );
+      flash.position.copy(gun.userData.muzzle);
+      gun.add(flash);
+
+      const light = new THREE.PointLight(0xffd08a, 0, 12, 2);
+      light.position.copy(gun.userData.muzzle);
+      gun.add(light);
+
+      gun.userData.flash = flash;
+      gun.userData.light = light;
+      gun.position.copy(this.rest);
+      gun.rotation.y = 0.06;
+      gun.visible = index === 0;
+
+      camera.add(gun);
+      this.models.push(gun);
+      this.ammo.push(spec.mag);
     });
-    this.flash = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), flashMaterial);
-    this.flash.position.copy(this.muzzle.position);
-    gun.add(this.flash);
-
-    this.flashLight = new THREE.PointLight(0xffd08a, 0, 12, 2);
-    this.flashLight.position.copy(this.muzzle.position);
-    gun.add(this.flashLight);
-
-    /* Held low and right, angled slightly inward like an over-the-sights view */
-    this.rest = new THREE.Vector3(0.19, -0.17, -0.34);
-    gun.position.copy(this.rest);
-    gun.rotation.y = 0.06;
-
-    camera.add(gun);
-    this.gun = gun;
-    this.raycaster = new THREE.Raycaster();
-    this.raycaster.far = this.RANGE;
-    this.ammo = this.MAG;
-    return gun;
   },
 
-  /* Returns { hit, headshot, distance, point } — hit is false on a miss,
-     a wall, an empty magazine or while reloading. */
-  fire(THREE, camera, walls, monsterBody) {
-    if (this.cooldown > 0 || this.reloading > 0) return { hit: false, spent: false };
-    if (this.ammo <= 0) {
+  select(index) {
+    if (index < 0 || index >= this.LIST.length || index === this.current) return false;
+    this.models[this.current].visible = false;
+    this.current = index;
+    this.models[index].visible = true;
+    this.reloading = 0;
+    this.cooldown = 0.2;          // brief beat while it comes up
+    this.recoil = 0.6;
+    return true;
+  },
+
+  selectById(id) {
+    return this.select(this.LIST.findIndex((spec) => spec.id === id));
+  },
+
+  /* ---------- Firing ---------- */
+
+  /* Returns { spent, dry, hits: [{ body, damage, headshot, point }] }.
+     One entry per pellet that found a monster. */
+  fire(THREE, camera, walls, bodies) {
+    const spec = this.spec;
+    if (this.cooldown > 0 || this.reloading > 0) return { spent: false, hits: [] };
+    if (this.ammo[this.current] <= 0) {
       this.reload();
-      return { hit: false, spent: false, dry: true };
+      return { spent: false, dry: true, hits: [] };
     }
 
-    this.ammo -= 1;
-    this.cooldown = this.FIRE_DELAY;
+    this.ammo[this.current] -= 1;
+    this.cooldown = spec.delay;
     this.recoil = 1;
-    this.flash.material.opacity = 1;
-    this.flash.rotation.z = Math.random() * Math.PI;
-    this.flashLight.intensity = 4.5;
 
-    this.raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+    const model = this.models[this.current];
+    model.userData.flash.material.opacity = 1;
+    model.userData.flash.rotation.z = Math.random() * Math.PI;
+    model.userData.light.intensity = spec.id === 'shotgun' ? 7 : 4.5;
 
     const targets = [];
     if (walls) targets.push(walls);
-    if (monsterBody) targets.push(monsterBody);
-    const hits = this.raycaster.intersectObjects(targets, true);
-    if (!hits.length) return { hit: false, spent: true };
+    bodies.forEach((body) => targets.push(body));
 
-    const first = hits[0];
+    this.raycaster.far = spec.range;
+    const hits = [];
 
-    /* Is the nearest thing the monster, or a wall in the way? */
-    let node = first.object;
-    let onMonster = false;
-    let headshot = false;
-    while (node) {
-      if (node === monsterBody) { onMonster = true; break; }
-      if (/Head|Tooth|Lips|Mouth|Eye|Pupil/.test(node.name || '')) headshot = true;
-      node = node.parent;
+    for (let pellet = 0; pellet < spec.pellets; pellet++) {
+      // a cone around the crosshair; the first pellet of a single-shot gun is dead centre
+      const spread = spec.spread;
+      const ox = spread ? (Math.random() - 0.5) * 2 * spread : 0;
+      const oy = spread ? (Math.random() - 0.5) * 2 * spread : 0;
+      this.raycaster.setFromCamera({ x: ox, y: oy }, camera);
+
+      const found = this.raycaster.intersectObjects(targets, true);
+      if (!found.length) continue;
+
+      const first = found[0];
+      let node = first.object;
+      let body = null;
+      let headshot = false;
+      while (node) {
+        if (bodies.includes(node)) { body = node; break; }
+        if (/Head|Tooth|Lips|Mouth|Eye|Pupil/.test(node.name || '')) headshot = true;
+        node = node.parent;
+      }
+      if (!body) continue;      // a wall was nearer, so it stopped the pellet
+
+      hits.push({
+        body,
+        headshot,
+        point: first.point,
+        damage: spec.damage * (headshot ? spec.headMultiplier : 1),
+      });
     }
 
-    if (!onMonster) return { hit: false, spent: true, wall: first.point };
-
-    return {
-      hit: true,
-      spent: true,
-      headshot,
-      distance: first.distance,
-      point: first.point,
-      damage: this.BODY_DAMAGE * (headshot ? this.HEAD_MULTIPLIER : 1),
-    };
+    return { spent: true, hits };
   },
 
   reload() {
-    if (this.reloading > 0 || this.ammo === this.MAG) return false;
-    this.reloading = this.RELOAD_TIME;
+    const spec = this.spec;
+    if (this.reloading > 0 || this.ammo[this.current] === spec.mag) return false;
+    this.reloading = spec.reload;
     return true;
   },
 
@@ -133,35 +196,47 @@ const Weapon = {
       this.reloading -= dt;
       if (this.reloading <= 0) {
         this.reloading = 0;
-        this.ammo = this.MAG;
+        this.ammo[this.current] = this.spec.mag;
       }
     }
 
-    if (this.flash) {
-      this.flash.material.opacity = Math.max(0, this.flash.material.opacity - dt * 22);
-      this.flashLight.intensity = Math.max(0, this.flashLight.intensity - dt * 90);
-    }
+    const model = this.models[this.current];
+    if (!model) return;
 
-    if (!this.gun) return;
+    const flash = model.userData.flash;
+    flash.material.opacity = Math.max(0, flash.material.opacity - dt * 22);
+    model.userData.light.intensity = Math.max(0, model.userData.light.intensity - dt * 90);
 
-    /* walk sway, reload dip, and recoil kick */
-    const dip = this.reloading > 0 ? Math.sin((1 - this.reloading / this.RELOAD_TIME) * Math.PI) : 0;
-    const bobX = Math.sin(this.sway) * 0.008 * pace;
-    const bobY = Math.abs(Math.cos(this.sway)) * 0.006 * pace;
+    const dip = this.reloading > 0
+      ? Math.sin((1 - this.reloading / this.spec.reload) * Math.PI)
+      : 0;
+    const kick = this.spec.id === 'shotgun' ? 0.11 : 0.07;
 
-    this.gun.position.set(
-      this.rest.x + bobX,
-      this.rest.y + bobY - dip * 0.16,
-      this.rest.z + this.recoil * 0.07,
+    model.position.set(
+      this.rest.x + Math.sin(this.sway) * 0.008 * pace,
+      this.rest.y + Math.abs(Math.cos(this.sway)) * 0.006 * pace - dip * 0.16,
+      this.rest.z + this.recoil * kick,
     );
-    this.gun.rotation.x = -this.recoil * 0.28 - dip * 0.5;
-    this.gun.rotation.z = dip * 0.3;
+    model.rotation.x = -this.recoil * (this.spec.id === 'shotgun' ? 0.4 : 0.28) - dip * 0.5;
+    model.rotation.z = dip * 0.3;
   },
 
   reset() {
-    this.ammo = this.MAG;
+    this.LIST.forEach((spec, i) => { this.ammo[i] = spec.mag; });
     this.reloading = 0;
     this.cooldown = 0;
     this.recoil = 0;
+    if (this.models.length) {
+      this.models.forEach((model, i) => { model.visible = i === 0; });
+      this.current = 0;
+    }
+  },
+
+  get magSize() {
+    return this.spec.mag;
+  },
+
+  get rounds() {
+    return this.ammo[this.current];
   },
 };

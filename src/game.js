@@ -15,13 +15,13 @@
   const ACCEL = 14;
   const MAX_PITCH = Math.PI / 2 - 0.05;
 
-  /* Monster speed sits between walking (4.6) and sprinting (7.4): you cannot
-     stroll away from it, but you can outrun it if you know where you are
-     going. `grace` is the head start before it begins hunting. */
+  /* Monster speeds sit between walking (4.6) and sprinting (7.4): you cannot
+     stroll away from them, but you can outrun them if you know where you are
+     going. Per-world values live in worlds.js. */
   const SIZES = {
-    small: { cols: 8, rows: 8, label: 'Small', hunter: 3.9, grace: 5, intercept: false },
-    medium: { cols: 13, rows: 13, label: 'Medium', hunter: 4.5, grace: 4, intercept: true },
-    large: { cols: 20, rows: 20, label: 'Large', hunter: 5.1, grace: 3.5, intercept: true },
+    small: { cols: 8, rows: 8, label: 'Small' },
+    medium: { cols: 13, rows: 13, label: 'Medium' },
+    large: { cols: 20, rows: 20, label: 'Large' },
   };
 
   /* ---------- Renderer ---------- */
@@ -60,8 +60,7 @@
     kick: 0,          // camera punch when mauled
   };
 
-  const MAUL_DAMAGE = 34;      // three hits and you are down
-  const MAUL_COOLDOWN = 1.1;
+  const MAUL_COOLDOWN = 1.1;   // damage per hit comes from the monster variant
 
   let maze = null;
   let world = null;
@@ -71,9 +70,15 @@
   let startTime = 0;
   let elapsed = 0;
   let sizeKey = 'medium';
+  let worldKey = 'w1';
   let deathTimer = 0;
   let stepTimer = 0;
   let lastEntry = null;      // the run just recorded, so it can be highlighted/renamed
+  let killer = null;         // which monster got you
+  let firing = false;
+
+  const boardKey = () => `${worldKey}-${sizeKey}`;
+  const worldDef = () => Worlds[worldKey];
 
   const clock = new THREE.Clock();
 
@@ -102,8 +107,15 @@
     hurt: document.getElementById('hurt'),
     monsterBar: document.getElementById('monster-bar'),
     monsterFill: document.getElementById('monster-fill'),
+    monsterName: document.getElementById('monster-name'),
+    alive: document.getElementById('alive'),
+    gunName: document.getElementById('gun-name'),
+    gunSlots: document.getElementById('gun-slots'),
+    worlds: document.getElementById('worlds'),
+    playerName: document.getElementById('player-name'),
     fireBtn: document.getElementById('fire-btn'),
     reloadBtn: document.getElementById('reload-btn'),
+    swapBtn: document.getElementById('swap-btn'),
     boardSize: document.getElementById('board-size'),
     boardList: document.getElementById('board-list'),
     boardEmpty: document.getElementById('board-empty'),
@@ -125,24 +137,29 @@
 
   function newMaze() {
     if (world) world.dispose();
-    Monster.remove(scene);
+    Monsters.clear(scene);
 
     const size = SIZES[sizeKey];
-    maze = Maze.generate(size.cols, size.rows);
+    const def = worldDef();
+    const scale = def.sizeScale;
+    maze = Maze.generate(Math.round(size.cols * scale), Math.round(size.rows * scale));
     distances = Maze.distanceField(maze);
     visited = new Uint8Array(maze.width * maze.height);
-    world = World.build(THREE, scene, maze, quality);
+    world = World.build(THREE, scene, maze, quality, def);
 
-    /* Put the monster as far from your start as the maze allows. */
-    if (Monster.loaded) {
-      const fromStart = Monster.fieldFrom(maze, maze.start.x, maze.start.y);
-      Monster.spawn(THREE, scene, maze, {
+    torch.color.set(def.palette.torchColor);
+    torch.intensity = def.palette.torchPower;
+    torch.distance = def.palette.torchRange;
+
+    /* The pack spawns as far from your start as the maze allows, spread out. */
+    if (Monsters.loaded) {
+      Monsters.spawnPack(THREE, scene, maze, {
         tile: TILE,
-        speed: size.hunter,
-        grace: size.grace,
-        cell: Monster.pickSpawn(maze, fromStart),
-        exitField: distances,      // it knows the maze as well as the maze does
-        intercept: size.intercept,
+        speed: def.hunter[sizeKey],
+        grace: def.grace[sizeKey],
+        pack: def.pack,
+        exitField: distances,      // they know the maze as well as the maze does
+        intercept: def.intercept[sizeKey],
         playerSpeed: (WALK + SPRINT) / 2,
       });
     }
@@ -157,7 +174,7 @@
     player.health = 100;
     player.hurtCooldown = 0;
     player.kick = 0;
-    Weapon.reset();
+    Guns.reset();
     el.kills.textContent = '0';
 
     // face the first open direction so you never start staring at a wall
@@ -257,13 +274,13 @@
 
     /* The monster only appears on the map once it is close — knowing exactly
        where it always is would drain the tension out of the chase. */
-    const hunter = Monster.state;
-    if (hunter && hunter.distanceToPlayer < TILE * 7) {
-      mapCtx.fillStyle = '#f87171';
+    Monsters.pack.forEach((m) => {
+      if (m.dead || m.distanceToPlayer > TILE * 7) return;
+      mapCtx.fillStyle = m.variant === 'mini' ? '#fb923c' : '#f87171';
       mapCtx.beginPath();
-      mapCtx.arc((hunter.x / TILE) * cell, (hunter.z / TILE) * cell, 3, 0, Math.PI * 2);
+      mapCtx.arc((m.x / TILE) * cell, (m.z / TILE) * cell, m.variant === 'mini' ? 2 : 3, 0, Math.PI * 2);
       mapCtx.fill();
-    }
+    });
 
     // player, pointing the way they face
     const cx = (player.x / TILE) * cell;
@@ -296,6 +313,9 @@
     el.hud.classList.remove('hidden');
     el.touch.classList.toggle('hidden', !coarse);
     el.danger.style.opacity = '0';
+    firing = false;
+    killer = null;
+    renderGun();
     if (!coarse) Controls.requestLock();
     clock.getDelta();
   }
@@ -312,61 +332,86 @@
   function shoot() {
     if (mode !== 'playing') return;
 
-    const hunter = Monster.state;
-    const body = hunter && !hunter.dead ? hunter.body : null;
-    const before = Weapon.ammo;
-    const shot = Weapon.fire(THREE, camera, world.walls, body);
-
+    const shot = Guns.fire(THREE, camera, world.walls, Monsters.bodies());
     if (shot.dry) { Audio3D.blip('dry'); return; }
-    if (!shot.spent && before === Weapon.ammo) return;   // still on cooldown
+    if (!shot.spent) return;                 // cooldown or reloading
 
     Audio3D.blip('shot');
-    player.kick = Math.min(player.kick + 0.035, 0.08);
+    player.kick = Math.min(player.kick + (Guns.spec.id === 'shotgun' ? 0.07 : 0.03), 0.1);
 
-    if (!shot.hit) return;
+    if (!shot.hits.length) return;
 
     const direction = new THREE.Vector3();
     camera.getWorldDirection(direction);
-    const result = Monster.damage(shot.damage, { x: direction.x, z: direction.z }, elapsed);
 
-    flashHitmarker(shot.headshot);
-    Audio3D.blip(shot.headshot ? 'headshot' : 'hit');
+    /* A shotgun blast can land several pellets on the same target, so total
+       them up per monster and apply one hit — otherwise the flinch and the
+       sound would fire eight times. */
+    const tally = new Map();
+    let anyHead = false;
+    shot.hits.forEach((hit) => {
+      tally.set(hit.body, (tally.get(hit.body) || 0) + hit.damage);
+      if (hit.headshot) anyHead = true;
+    });
 
-    if (result === 'killed') {
+    let killed = 0;
+    tally.forEach((damage, body) => {
+      const monster = Monsters.find(body);
+      if (!monster) return;
+      const result = Monsters.damage(monster, damage, { x: direction.x, z: direction.z }, elapsed);
+      if (result === 'killed') killed += 1;
+    });
+
+    flashHitmarker(anyHead);
+    Audio3D.blip(anyHead ? 'headshot' : 'hit');
+    if (killed) {
       Audio3D.blip('death');
-      el.kills.textContent = Monster.state.kills;
-    } else if (result === 'hurt') {
+      el.kills.textContent = Monsters.kills;
+    } else {
       Audio3D.blip('pain');
     }
   }
 
-  /* The monster mauls rather than instantly kills, so a fight is winnable. */
-  function contact() {
+  /* They maul rather than instantly kill, so a fight is winnable. */
+  function contact(monster) {
     if (mode !== 'playing' || player.hurtCooldown > 0) return;
     player.hurtCooldown = MAUL_COOLDOWN;
-    player.health -= MAUL_DAMAGE;
+    player.health -= monster.kind.damage;
     player.kick = 0.16;
+    killer = monster;
     Audio3D.blip('hurt');
 
     el.hurt.classList.remove('hidden');
     setTimeout(() => el.hurt.classList.add('hidden'), 220);
 
     // shoved back, so you get a chance to shoot your way out
-    const hunter = Monster.state;
-    if (hunter) {
-      const dx = player.x - hunter.x;
-      const dz = player.z - hunter.z;
-      const gap = Math.hypot(dx, dz) || 1;
-      const nextX = player.x + (dx / gap) * 0.9;
-      const nextZ = player.z + (dz / gap) * 0.9;
-      if (!blocked(nextX, player.z)) player.x = nextX;
-      if (!blocked(player.x, nextZ)) player.z = nextZ;
-    }
+    const dx = player.x - monster.x;
+    const dz = player.z - monster.z;
+    const gap = Math.hypot(dx, dz) || 1;
+    const nextX = player.x + (dx / gap) * 0.9;
+    const nextZ = player.z + (dz / gap) * 0.9;
+    if (!blocked(nextX, player.z)) player.x = nextX;
+    if (!blocked(player.x, nextZ)) player.z = nextZ;
 
     if (player.health <= 0) {
       player.health = 0;
       caught();
     }
+  }
+
+  function switchGun(index) {
+    if (mode !== 'playing') return;
+    if (Guns.select(index)) {
+      Audio3D.blip('reload');
+      renderGun();
+    }
+  }
+
+  function renderGun() {
+    el.gunName.textContent = Guns.spec.name;
+    el.gunSlots.querySelectorAll('span').forEach((slot, i) => {
+      slot.classList.toggle('on', i === Guns.current);
+    });
   }
 
   /* Caught: freeze the player, let the monster lunge into the camera for a
@@ -384,8 +429,8 @@
   function showCaughtPanel() {
     Audio3D.silence();
     lastEntry = null;
-    Scores.recordDeath(sizeKey);
-    const kills = Monster.state ? Monster.state.kills : 0;
+    Scores.recordDeath(boardKey());
+    const kills = Monsters.kills;
     el.title.textContent = '💀 Caught';
     el.text.innerHTML = kills
       ? `Killed it ${kills} time${kills > 1 ? 's' : ''}, then it got you after <b>${formatTime(elapsed)}</b>.`
@@ -404,9 +449,9 @@
     Audio3D.silence();
     Audio3D.blip('win');
     const seconds = elapsed;
-    const kills = Monster.state ? Monster.state.kills : 0;
-    const previousBest = Scores.best(sizeKey);
-    lastEntry = Scores.add(sizeKey, seconds, kills);
+    const kills = Monsters.kills;
+    const previousBest = Scores.best(boardKey());
+    lastEntry = Scores.add(boardKey(), seconds, kills);
     if (document.exitPointerLock) document.exitPointerLock();
 
     const isRecord = previousBest === null || seconds < previousBest;
@@ -450,20 +495,20 @@
   }
 
   function renderBest() {
-    const record = Scores.best(sizeKey);
+    const record = Scores.best(boardKey());
     el.bestOut.textContent = record === null ? '--:--' : formatTime(record);
   }
 
   /* ---------- Leaderboard ---------- */
 
   function renderBoard() {
-    const table = Scores.top(sizeKey);
-    el.boardSize.textContent = SIZES[sizeKey].label;
+    const table = Scores.top(boardKey());
+    el.boardSize.textContent = `${worldDef().name} · ${SIZES[sizeKey].label}`;
     el.boardList.textContent = '';
     el.boardEmpty.classList.toggle('hidden', table.length > 0);
 
     const escapes = table.length;
-    const deaths = Scores.deaths(sizeKey);
+    const deaths = Scores.deaths(boardKey());
     el.boardTally.textContent = escapes || deaths
       ? `${escapes} escape${escapes === 1 ? '' : 's'} · ${deaths} death${deaths === 1 ? '' : 's'}`
       : '';
@@ -508,38 +553,41 @@
       world.shimmer.scale.setScalar(1 + Math.sin(time * 2.4) * 0.06);
       world.exitGlow.intensity = 2.2 + Math.sin(time * 3) * 0.5;
 
-      Monster.update(dt, player, contact, elapsed);
-      Weapon.update(dt, Math.min(1, Math.hypot(player.vx, player.vz) / WALK));
+      const nearest = Monsters.updateAll(dt, player, contact, elapsed);
+      const pace = Math.min(1, Math.hypot(player.vx, player.vz) / WALK);
+      Guns.update(dt, pace);
+      if (firing && Guns.spec.auto) shoot();
 
       player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
       player.kick *= Math.exp(-dt * 9);
 
-      /* Proximity feedback: you hear and see it coming before you meet it. */
-      const hunter = Monster.state;
-      if (hunter) {
-        const alive = !hunter.dead;
-        const near = alive ? Audio3D.proximity(hunter.distanceToPlayer) : Audio3D.proximity(999);
-        el.danger.style.opacity = (near * 0.85).toFixed(3);
-        el.warning.classList.toggle('hidden',
-          !(alive && hunter.grace <= 0 && hunter.distanceToPlayer < TILE * 3));
+      /* Proximity feedback comes from whichever one is closest. */
+      const near = Audio3D.proximity(nearest ? nearest.distanceToPlayer : 999);
+      el.danger.style.opacity = (near * 0.85).toFixed(3);
+      el.warning.classList.toggle('hidden',
+        !(nearest && nearest.grace <= 0 && nearest.distanceToPlayer < TILE * 3));
 
-        stepTimer -= dt;
-        if (stepTimer <= 0 && alive && hunter.grace <= 0 && near > 0.12) {
-          stepTimer = 0.42;
-          Audio3D.blip('step');
-        }
-
-        /* Its health bar shows while you can see it, or just after a hit. */
-        const showBar = alive && (hunter.sees && hunter.distanceToPlayer < 24
-          || elapsed - hunter.hurtAt < 2.5);
-        el.monsterBar.classList.toggle('hidden', !showBar);
-        el.monsterFill.style.width = `${(hunter.health / Monster.MAX_HEALTH) * 100}%`;
+      stepTimer -= dt;
+      if (stepTimer <= 0 && nearest && nearest.grace <= 0 && near > 0.12) {
+        stepTimer = 0.42;
+        Audio3D.blip('step');
       }
 
+      /* Health bar for the one you are looking at, or just hit. */
+      const focus = Monsters.pack
+        .filter((m) => !m.dead && (m.sees && m.distanceToPlayer < 24 || elapsed - m.hurtAt < 2.5))
+        .sort((a, b) => a.distanceToPlayer - b.distanceToPlayer)[0];
+      el.monsterBar.classList.toggle('hidden', !focus);
+      if (focus) {
+        el.monsterName.textContent = focus.kind.label;
+        el.monsterFill.style.width = `${(focus.health / focus.maxHealth) * 100}%`;
+      }
+
+      el.alive.textContent = Monsters.alive();
       el.health.style.width = `${player.health}%`;
       el.healthText.textContent = player.health;
       el.health.classList.toggle('health--low', player.health <= 34);
-      el.ammo.textContent = Weapon.reloading > 0 ? 'RELOADING' : `${Weapon.ammo} / ${Weapon.MAG}`;
+      el.ammo.textContent = Guns.reloading > 0 ? 'RELOADING' : `${Guns.rounds} / ${Guns.magSize}`;
 
       const gap = Math.hypot(player.x - world.exitPosition.x, player.z - world.exitPosition.z);
       if (gap < 1.6) win();
@@ -549,9 +597,9 @@
       el.distance.textContent = tiles >= 0 ? `${tiles} tiles` : '—';
       drawMinimap();
     } else if (mode === 'caught') {
-      Monster.lunge(dt, camera);
+      Monsters.lunge(killer, dt, camera);
       // look at what got you
-      const s = Monster.state;
+      const s = killer;
       if (s) {
         const want = Math.atan2(-(s.x - player.x), -(s.z - player.z));
         let delta = want - player.yaw;
@@ -574,7 +622,7 @@
   /* ---------- Wiring ---------- */
 
   Controls.init(canvas);
-  Weapon.build(THREE, camera);
+  Guns.build(THREE, camera);
   Controls.onLockChange = (locked) => {
     if (!locked && mode === 'playing' && !coarse) pause();
   };
@@ -582,13 +630,13 @@
   /* The model has to be in before a run can start. */
   el.play.disabled = true;
   el.play.textContent = 'Waking the monster…';
-  Monster.load(THREE, 'assets/blue_monster.glb').then(() => {
+  Monsters.load(THREE, 'assets/blue_monster.glb').then(() => {
     el.play.disabled = false;
     el.play.textContent = 'Enter the maze';
   }).catch((error) => {
     console.error('monster failed to load', error);
     el.play.disabled = false;
-    el.play.textContent = 'Enter the maze (no monster)';
+    el.play.textContent = 'Enter the maze (no monsters)';
   });
 
   el.play.addEventListener('click', () => {
@@ -607,12 +655,34 @@
     });
   });
 
+  el.worlds.querySelectorAll('button').forEach((button) => {
+    button.addEventListener('click', () => {
+      worldKey = button.dataset.world;
+      el.worlds.querySelectorAll('button').forEach((other) => {
+        other.classList.toggle('on', other === button);
+      });
+      renderBest();
+      renderBoard();
+    });
+  });
+
+  /* Name is shared with the leaderboard, and either field can set it. */
+  function syncName(value) {
+    Scores.rename(lastEntry, value);
+    el.playerName.value = Scores.name;
+    el.boardName.value = Scores.name;
+    renderBoard();
+  }
+
+  el.playerName.addEventListener('change', () => syncName(el.playerName.value));
+  el.playerName.addEventListener('keydown', (event) => {
+    if (event.code === 'Enter') el.playerName.blur();
+    event.stopPropagation();
+  });
+
   /* Editing the name renames the run you just posted, so a late correction
      still lands on the right row. */
-  el.boardName.addEventListener('change', () => {
-    Scores.rename(lastEntry, el.boardName.value);
-    renderBoard();
-  });
+  el.boardName.addEventListener('change', () => syncName(el.boardName.value));
   el.boardName.addEventListener('keydown', (event) => {
     if (event.code === 'Enter') el.boardName.blur();
     event.stopPropagation();          // do not let R or Escape reach the game
@@ -620,7 +690,7 @@
 
   el.boardClear.addEventListener('click', () => {
     if (el.boardClear.dataset.armed) {
-      Scores.clear(sizeKey);
+      Scores.clear(boardKey());
       lastEntry = null;
       delete el.boardClear.dataset.armed;
       el.boardClear.textContent = 'Clear';
@@ -639,24 +709,30 @@
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Escape' && mode === 'playing') pause();
     if (event.code === 'KeyR' && mode === 'playing') {
-      if (Weapon.reload()) Audio3D.blip('reload');
+      if (Guns.reload()) Audio3D.blip('reload');
+    }
+    if (mode === 'playing') {
+      const slot = ['Digit1', 'Digit2', 'Digit3'].indexOf(event.code);
+      if (slot >= 0) switchGun(slot);
     }
   });
 
-  /* Fire: mouse while the pointer is locked, or the on-screen button. */
+  /* Fire: mouse while the pointer is locked, or the on-screen button.
+     Holding only keeps firing on a weapon that is actually automatic. */
   canvas.addEventListener('mousedown', (event) => {
     if (event.button !== 0) return;
-    if (mode === 'playing' && Controls.locked) shoot();
+    if (mode !== 'playing' || !Controls.locked) return;
+    firing = true;
+    shoot();
   });
+  window.addEventListener('mouseup', () => { firing = false; });
 
-  let autoFire = null;
   const startFiring = (event) => {
     event.preventDefault();
+    firing = true;
     shoot();
-    clearInterval(autoFire);
-    autoFire = setInterval(shoot, 170);   // held button keeps firing
   };
-  const stopFiring = () => { clearInterval(autoFire); autoFire = null; };
+  const stopFiring = () => { firing = false; };
 
   el.fireBtn.addEventListener('pointerdown', startFiring);
   el.fireBtn.addEventListener('pointerup', stopFiring);
@@ -665,13 +741,20 @@
 
   el.reloadBtn.addEventListener('pointerdown', (event) => {
     event.preventDefault();
-    if (Weapon.reload()) Audio3D.blip('reload');
+    if (Guns.reload()) Audio3D.blip('reload');
+  });
+
+  el.swapBtn.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    switchGun((Guns.current + 1) % Guns.LIST.length);
   });
 
   window.addEventListener('resize', resize);
   resize();
   Scores.load();
+  el.playerName.value = Scores.name;
   renderBest();
   renderBoard();
+  renderGun();
   frame();
 })();

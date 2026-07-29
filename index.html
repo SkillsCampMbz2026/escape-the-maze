@@ -27,7 +27,7 @@
     <div id="hitmarker" class="hidden"></div>
 
     <div id="monster-bar" class="hidden">
-      <span class="monster-bar__label">Monster</span>
+      <span class="monster-bar__label" id="monster-name">Hunter</span>
       <div class="monster-bar__track"><div id="monster-fill"></div></div>
     </div>
 
@@ -38,11 +38,16 @@
       </div>
       <div class="ammo-box">
         <span id="ammo">8 / 8</span>
-        <span class="ammo-box__hint">R to reload</span>
+        <span class="ammo-box__hint"><b id="gun-name">Sidearm</b> · R reload</span>
+        <span class="slots" id="gun-slots"><span class="on">1</span><span>2</span><span>3</span></span>
       </div>
       <div class="kill-box">
         <span class="kill-box__label">Kills</span>
         <span id="kills">0</span>
+      </div>
+      <div class="kill-box">
+        <span class="kill-box__label">Hunting</span>
+        <span id="alive">1</span>
       </div>
     </div>
   </div>
@@ -55,13 +60,32 @@
     <div id="stick"><div id="stick-knob"></div></div>
     <button id="fire-btn">FIRE</button>
     <button id="reload-btn">⟳</button>
+    <button id="swap-btn">GUN</button>
   </div>
 
   <!-- menu / pause / win -->
   <div id="overlay">
     <div id="panel">
       <h1 id="panel-title">Escape the Maze</h1>
-      <p id="panel-text">You are dropped in a maze at night — and something is in here with you. Find the glowing green gate before it finds you.</p>
+      <p id="panel-text">You are dropped in a maze at night — and something is in here with you. Find the glowing gate before it finds you.</p>
+
+      <label class="who">
+        <span>Your name</span>
+        <input id="player-name" type="text" maxlength="14" spellcheck="false" placeholder="Player">
+      </label>
+
+      <div id="worlds" class="worlds">
+        <button data-world="w1" class="on">
+          <b>World 1 · Stone Maze</b>
+          <i>Moonlit stone · 1 hunter</i>
+          <em>Normal</em>
+        </button>
+        <button data-world="w2">
+          <b>World 2 · The Foundry</b>
+          <i>Molten dark · 2 hunters + 3 runts · bigger maze</i>
+          <em class="brutal">Brutal</em>
+        </button>
+      </div>
 
       <div id="sizes" class="sizes">
         <button data-size="small">Small</button>
@@ -88,6 +112,7 @@
         <li><b>W A S D</b> move</li>
         <li><b>Mouse</b> look</li>
         <li><b>Click</b> shoot</li>
+        <li><b>1 2 3</b> guns</li>
         <li><b>R</b> reload</li>
         <li><b>Shift</b> run</li>
         <li><b>Esc</b> pause</li>
@@ -103,6 +128,7 @@
   <script src="vendor/three.min.js"></script>
   <script src="vendor/GLTFLoader.js"></script>
   <script src="src/maze.js"></script>
+  <script src="src/worlds.js"></script>
   <script src="src/world.js"></script>
   <script src="src/controls.js"></script>
   <script src="src/audio.js"></script>

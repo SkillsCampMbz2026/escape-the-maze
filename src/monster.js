@@ -1,15 +1,17 @@
-/* The monster: loads blue_monster.glb, rigs it, hunts you through the maze.
+/* The monsters: load blue_monster.glb once, then spawn a pack of them.
 
    The model has no animations and no skin — it is 51 rigid meshes in a named
-   hierarchy, and every joint node sits at the origin with an identity
-   transform. Rotating those nodes directly would swing each limb around the
-   model's centre, so first we give each joint a real pivot: wrap its children
-   in a group placed at the joint position and offset them back. After that a
-   run cycle is just rotating those groups. */
+   hierarchy whose joint nodes all sit at the origin with identity transforms.
+   Rotating those directly would swing each limb around the model's centre, so
+   an auto-rig pass gives every joint a real pivot: wrap its children in a
+   group placed at the joint and offset them back, parents before children.
+   The run cycle is then just rotating those groups.
 
-const Monster = {
-  /* Which joints to rig: the mesh that defines the pivot, whether the joint
-     sits at the top or bottom of it, and the joint it hangs off. */
+   Hunting is a breadth-first field over the whole maze, so every route is the
+   true shortest path. On top of that they compare arrival times along your
+   likely route to the exit and try to get in front of you. */
+
+const Monsters = {
   JOINTS: [
     { name: 'HipL', from: 'UpperLegL', at: 'top', parent: null },
     { name: 'LowerLegPivotL', from: 'LowerLegL', at: 'top', parent: 'HipL' },
@@ -22,25 +24,34 @@ const Monster = {
     { name: 'HeadPivot', from: 'Head', at: 'bottom', parent: null },
   ],
 
-  HEIGHT: 2.05,        // world units, tuned against a 3.4-high wall
-  CATCH_RANGE: 1.35,
-  MAX_HEALTH: 100,
-  RESPAWN_DELAY: 7,    // seconds out of the game after you drop it
+  /* Big ones hit hard and soak damage; the little ones are quick and brittle. */
+  VARIANTS: {
+    big: {
+      height: 2.05, health: 100, speed: 1, damage: 34, catchRange: 1.35,
+      eye: 0x86e3ff, tint: null, respawn: 7, label: 'Hunter',
+    },
+    mini: {
+      height: 1.05, health: 34, speed: 1.34, damage: 15, catchRange: 0.95,
+      eye: 0xffb066, tint: 0xff8a4c, respawn: 5, label: 'Runt',
+    },
+  },
 
   loaded: false,
-  ready: null,
+  template: null,
+  pack: [],
+  kills: 0,
 
   /* ---------- Loading and rigging ---------- */
 
   load(THREE, url) {
-    this.ready = new Promise((resolve, reject) => {
+    this.THREE = THREE;
+    return new Promise((resolve, reject) => {
       new THREE.GLTFLoader().load(url, (gltf) => {
         this.template = this.rig(THREE, gltf.scene);
         this.loaded = true;
         resolve(this.template);
       }, undefined, reject);
     });
-    return this.ready;
   },
 
   rig(THREE, root) {
@@ -49,16 +60,11 @@ const Monster = {
       if (object.name) byName[object.name] = object;
       if (object.isMesh) {
         object.castShadow = true;
-        object.frustumCulled = false;   // it is one logical creature, cull as a whole
-        if (object.material) {
-          object.material = object.material.clone();
-          object.material.side = THREE.FrontSide;
-        }
+        object.frustumCulled = false;
       }
     });
 
-    /* Pivot positions, measured in the original model space before anything
-       moves, so the measurements stay consistent with each other. */
+    /* Pivot points, measured before anything moves so they stay consistent. */
     const pivots = {};
     this.JOINTS.forEach((joint) => {
       const source = byName[joint.from];
@@ -72,9 +78,8 @@ const Monster = {
       );
     });
 
-    /* Apply parents before children: a child joint lives inside its parent's
-       new wrapper, so its pivot has to be expressed relative to that. */
-    const rigged = {};
+    /* Parents first: a child joint lives inside its parent's new wrapper, so
+       its pivot has to be expressed relative to that. */
     this.JOINTS.forEach((joint) => {
       const node = byName[joint.name];
       const pivot = pivots[joint.name];
@@ -96,100 +101,139 @@ const Monster = {
         wrapper.add(child);
       }
       node.add(wrapper);
-      rigged[joint.name] = wrapper;
     });
 
-    /* Scale to a menacing-but-fair height and stand it on the floor. */
     const bounds = new THREE.Box3().setFromObject(root);
-    const scale = this.HEIGHT / (bounds.max.y - bounds.min.y);
 
-    const body = new THREE.Group();          // yaw + travel
+    const body = new THREE.Group();
     body.name = 'MonsterBody';
-    const inner = new THREE.Group();         // scale + ground offset + bob
+    const inner = new THREE.Group();
     inner.name = 'MonsterInner';
-    inner.scale.setScalar(scale);
-    inner.position.y = -bounds.min.y * scale;
     inner.add(root);
     body.add(inner);
 
-    /* Deliberately no Object3D references in userData: Object3D.clone deep
-       copies userData through JSON, and a scene node is circular. Everything
-       is found by name on the clone instead. */
-    void rigged;
+    /* Height is applied per spawn, so remember the raw model size. */
+    body.userData = { rawHeight: bounds.max.y - bounds.min.y, rawMinY: bounds.min.y };
     return body;
   },
 
   /* ---------- Spawning ---------- */
 
-  spawn(THREE, scene, maze, options) {
-    const body = this.template.clone(true);
+  clear(scene) {
+    this.pack.forEach((m) => scene.remove(m.body));
+    this.pack = [];
+    this.kills = 0;
+  },
 
-    // relink the rig on the clone by name (see the note in rig())
-    const rigged = {};
-    body.traverse((object) => {
-      if (object.name && object.name.endsWith('__pivot')) {
-        rigged[object.name.slice(0, -'__pivot'.length)] = object;
+  spawnPack(THREE, scene, maze, options) {
+    this.clear(scene);
+    const counts = options.pack || { big: 1, mini: 0 };
+    const fromStart = this.fieldFrom(maze, maze.start.x, maze.start.y);
+    const taken = [];
+
+    Object.keys(counts).forEach((variant) => {
+      for (let i = 0; i < (counts[variant] || 0); i++) {
+        const cell = this.pickSpawn(maze, fromStart, taken);
+        taken.push(cell);
+        this.pack.push(this.spawn(THREE, scene, maze, {
+          ...options,
+          variant,
+          cell,
+          // stagger the pack so they do not arrive as one clump
+          grace: options.grace + i * 0.9,
+        }));
       }
     });
 
+    return this.pack;
+  },
+
+  spawn(THREE, scene, maze, options) {
+    const kind = this.VARIANTS[options.variant] || this.VARIANTS.big;
+    const body = this.template.clone(true);
+    const raw = this.template.userData;
+
+    const rig = {};
+    body.traverse((object) => {
+      if (object.name && object.name.endsWith('__pivot')) {
+        rig[object.name.slice(0, -'__pivot'.length)] = object;
+      }
+    });
+
+    const inner = body.getObjectByName('MonsterInner');
+    const scale = kind.height / raw.rawHeight;
+    inner.scale.setScalar(scale);
+    inner.position.y = -raw.rawMinY * scale;
+
+    /* Recolour the small ones so you can tell at a glance what is coming.
+       clone() shares materials, so they have to be cloned per instance. */
+    if (kind.tint) {
+      body.traverse((object) => {
+        if (!object.isMesh || !object.material) return;
+        object.material = object.material.clone();
+        if (object.material.color) object.material.color.lerp(new THREE.Color(kind.tint), 0.55);
+      });
+    }
+
     scene.add(body);
 
-    const eyeLight = new THREE.PointLight(0x86e3ff, 0, 9, 2);
-    eyeLight.position.y = 1.6;
+    const eyeLight = new THREE.PointLight(kind.eye, 0, kind.height * 4.5, 2);
+    eyeLight.position.y = kind.height * 0.8;
     body.add(eyeLight);
 
-    this.state = {
+    const instance = {
       body,
-      rig: rigged,
-      inner: body.getObjectByName('MonsterInner'),
-      baseY: 0,
+      rig,
+      inner,
+      kind,
+      variant: options.variant,
+      baseY: inner.position.y,
       phase: Math.random() * Math.PI * 2,
       eyeLight,
       maze,
       tile: options.tile,
-      speed: options.speed,
+      speed: options.speed * kind.speed,
       grace: options.grace,
-      cell: options.cell,
-      /* Full knowledge of the maze: distances to the exit, so it can work out
-         your likely route and get in front of it. */
       exitField: options.exitField,
       intercept: options.intercept !== false,
       playerSpeed: options.playerSpeed || 5.2,
+      x: options.cell.x * options.tile + options.tile / 2,
+      z: options.cell.y * options.tile + options.tile / 2,
+      yaw: 0,
       path: null,
+      repathIn: Math.random() * 0.25,
       ambushing: false,
       sees: false,
-      health: this.MAX_HEALTH,
+      health: kind.health,
+      maxHealth: kind.health,
       dead: false,
       dying: 0,
       respawnIn: 0,
       flinch: 0,
       hurtAt: -99,
-      kills: 0,
-      x: options.cell.x * options.tile + options.tile / 2,
-      z: options.cell.y * options.tile + options.tile / 2,
-      yaw: 0,
-      field: null,
-      repathIn: 0,
-      target: null,
-      caught: false,
       distanceToPlayer: 999,
-      stepTimer: 0,
     };
 
-    body.position.set(this.state.x, 0, this.state.z);
-    return this.state;
+    body.position.set(instance.x, 0, instance.z);
+    return instance;
   },
 
-  /* Farthest open cell from the player's start, so it never spawns on top of
-     you, and never on the exit. */
-  pickSpawn(maze, distanceFromStart) {
+  /* Farthest open cell from the player, avoiding the exit and cells already
+     claimed by another monster. */
+  pickSpawn(maze, fromPlayer, taken = []) {
     let best = null;
     let bestScore = -1;
     for (let y = 1; y < maze.height - 1; y++) {
       for (let x = 1; x < maze.width - 1; x++) {
         if (maze.grid[y * maze.width + x]) continue;
         if (x === maze.exit.x && y === maze.exit.y) continue;
-        const score = distanceFromStart[y * maze.width + x];
+        let score = fromPlayer[y * maze.width + x];
+        if (score < 0) continue;
+        // push them apart so they spread through the maze
+        taken.forEach((cell) => {
+          const gap = Math.abs(cell.x - x) + Math.abs(cell.y - y);
+          if (gap < 8) score -= (8 - gap) * 6;
+        });
         if (score > bestScore) {
           bestScore = score;
           best = { x, y };
@@ -199,14 +243,12 @@ const Monster = {
     return best || { x: maze.width - 2, y: 1 };
   },
 
-  /* ---------- Hunting ---------- */
+  /* ---------- Maze knowledge ---------- */
 
-  /* Breadth-first field from the player: every open tile learns how many
-     steps it is from them, so the monster only has to walk downhill. */
   fieldFrom(maze, cellX, cellY) {
     const field = new Int32Array(maze.width * maze.height).fill(-1);
     const start = cellY * maze.width + cellX;
-    if (maze.grid[start]) return field;
+    if (start < 0 || start >= field.length || maze.grid[start]) return field;
     field[start] = 0;
 
     const queue = [start];
@@ -228,15 +270,13 @@ const Monster = {
     return field;
   },
 
-  /* Walk a field downhill from a cell, giving the whole route as tile centres.
-     Because the maze is perfect, downhill is unique — this is *the* shortest
-     path, not an approximation of one. */
+  /* Downhill through a field is the shortest path, not an approximation. */
   tracePath(maze, field, fromX, fromY, tile) {
     const path = [];
     let x = fromX;
     let y = fromY;
     let steps = field[y * maze.width + x];
-    if (steps < 0) return path;
+    if (steps === undefined || steps < 0) return path;
 
     let guard = maze.width * maze.height;
     while (steps > 0 && guard-- > 0) {
@@ -246,9 +286,7 @@ const Monster = {
         const ny = y + [0, 0, 1, -1][d];
         if (nx < 0 || ny < 0 || nx >= maze.width || ny >= maze.height) continue;
         if (field[ny * maze.width + nx] !== steps - 1) continue;
-        x = nx;
-        y = ny;
-        steps -= 1;
+        x = nx; y = ny; steps -= 1;
         path.push({ x: x * tile + tile / 2, z: y * tile + tile / 2, cx: x, cy: y });
         moved = true;
         break;
@@ -258,13 +296,10 @@ const Monster = {
     return path;
   },
 
-  /* Is the straight line between two points clear of walls, allowing for the
-     monster's width? Used to cut corners instead of pacing tile to tile. */
   clearLine(maze, tile, x1, z1, x2, z2) {
     const dx = x2 - x1;
     const dz = z2 - z1;
-    const span = Math.hypot(dx, dz);
-    const steps = Math.ceil(span / 0.3);
+    const steps = Math.ceil(Math.hypot(dx, dz) / 0.3);
     const r = 0.5;
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
@@ -279,224 +314,203 @@ const Monster = {
     return true;
   },
 
-  /* Where to head for. Straight chasing always aims at where you are now; a
-     hunter that knows the maze aims at where you are going to be. We walk
-     your likely route to the exit and compare arrival times tile by tile —
-     the furthest point it can reach before you becomes an ambush. */
-  chooseTarget(s, playerCellX, playerCellZ) {
-    const maze = s.maze;
+  /* Walk the player's likely route to the exit and compare arrival times: the
+     furthest tile this one can reach first becomes an ambush. */
+  chooseTarget(m, playerCellX, playerCellZ) {
+    const maze = m.maze;
     const chase = { x: playerCellX, y: playerCellZ, ambush: false };
-    if (!s.intercept || !s.exitField) return chase;
+    if (!m.intercept || !m.exitField) return chase;
 
-    const fromMonster = this.fieldFrom(maze, Math.floor(s.x / s.tile), Math.floor(s.z / s.tile));
-    const HORIZON = 22;
-    const playerPace = s.tile / s.playerSpeed;
-    const monsterPace = s.tile / s.speed;
+    const fromMe = this.fieldFrom(maze, Math.floor(m.x / m.tile), Math.floor(m.z / m.tile));
+    const playerPace = m.tile / m.playerSpeed;
+    const myPace = m.tile / m.speed;
 
     let x = playerCellX;
     let y = playerCellZ;
     let ambush = null;
 
-    for (let k = 1; k <= HORIZON; k++) {
-      const here = s.exitField[y * maze.width + x];
+    for (let k = 1; k <= 22; k++) {
+      const here = m.exitField[y * maze.width + x];
       if (here <= 0) break;
-
       let stepped = false;
       for (let d = 0; d < 4; d++) {
         const nx = x + [1, -1, 0, 0][d];
         const ny = y + [0, 0, 1, -1][d];
         if (nx < 0 || ny < 0 || nx >= maze.width || ny >= maze.height) continue;
-        if (s.exitField[ny * maze.width + nx] !== here - 1) continue;
-        x = nx;
-        y = ny;
-        stepped = true;
+        if (m.exitField[ny * maze.width + nx] !== here - 1) continue;
+        x = nx; y = ny; stepped = true;
         break;
       }
       if (!stepped) break;
 
-      const reach = fromMonster[y * maze.width + x];
+      const reach = fromMe[y * maze.width + x];
       if (reach < 0) continue;
-      // beat them there with a little to spare, or it is not an ambush
-      if (reach * monsterPace <= k * playerPace - 0.35) ambush = { x, y, ambush: true };
+      if (reach * myPace <= k * playerPace - 0.35) ambush = { x, y, ambush: true };
     }
 
     return ambush || chase;
   },
 
-  /* ---------- Taking damage ---------- */
+  /* ---------- Damage ---------- */
 
-  /* Returns 'killed' | 'hurt' | null. `from` is the shot direction, used to
-     shove it back so hits read as impacts rather than nothing happening. */
-  damage(amount, from, now) {
-    const s = this.state;
-    if (!s || s.dead) return null;
-
-    s.health -= amount;
-    s.hurtAt = now;
-    s.flinch = 0.22;
+  damage(m, amount, from, now) {
+    if (!m || m.dead) return null;
+    m.health -= amount;
+    m.hurtAt = now;
+    m.flinch = 0.22;
 
     if (from) {
-      const push = 0.35;
-      s.x += from.x * push;
-      s.z += from.z * push;
+      m.x += from.x * 0.3;
+      m.z += from.z * 0.3;
     }
 
-    if (s.health <= 0) {
-      s.health = 0;
-      s.dead = true;
-      s.dying = 1.1;
-      s.respawnIn = this.RESPAWN_DELAY;
-      s.kills += 1;
-      s.path = null;
+    if (m.health <= 0) {
+      m.health = 0;
+      m.dead = true;
+      m.dying = 1.1;
+      m.respawnIn = m.kind.respawn;
+      m.path = null;
+      this.kills += 1;
       return 'killed';
     }
     return 'hurt';
   },
 
-  /* Drops it out of play, then puts it back on the far side of the maze. */
-  respawn(playerCellX, playerCellZ) {
-    const s = this.state;
-    if (!s) return;
+  respawn(m, playerCellX, playerCellZ) {
+    const others = this.pack.filter((other) => other !== m && !other.dead)
+      .map((other) => ({ x: Math.floor(other.x / m.tile), y: Math.floor(other.z / m.tile) }));
+    const fromPlayer = this.fieldFrom(m.maze, playerCellX, playerCellZ);
+    const cell = this.pickSpawn(m.maze, fromPlayer, others);
 
-    const fromPlayer = this.fieldFrom(s.maze, playerCellX, playerCellZ);
-    const cell = this.pickSpawn(s.maze, fromPlayer);
-
-    s.x = cell.x * s.tile + s.tile / 2;
-    s.z = cell.y * s.tile + s.tile / 2;
-    s.health = this.MAX_HEALTH;
-    s.dead = false;
-    s.dying = 0;
-    s.respawnIn = 0;
-    s.flinch = 0;
-    s.path = null;
-    s.grace = 1.6;                 // a moment to find its feet
-    s.body.visible = true;
-    s.body.position.set(s.x, 0, s.z);
-    if (s.inner) {
-      s.inner.rotation.x = 0;
-      s.inner.rotation.z = 0;
-      s.inner.position.y = s.baseY || s.inner.position.y;
-    }
+    m.x = cell.x * m.tile + m.tile / 2;
+    m.z = cell.y * m.tile + m.tile / 2;
+    m.health = m.maxHealth;
+    m.dead = false;
+    m.dying = 0;
+    m.respawnIn = 0;
+    m.flinch = 0;
+    m.path = null;
+    m.grace = 1.6;
+    m.body.visible = true;
+    m.body.position.set(m.x, 0, m.z);
+    m.inner.rotation.set(0, 0, 0);
+    m.inner.position.y = m.baseY;
   },
 
-  update(dt, player, onContact, now) {
-    const s = this.state;
-    if (!s) return;
+  /* ---------- Per-frame ---------- */
 
-    const tile = s.tile;
-    const maze = s.maze;
+  updateAll(dt, player, onContact, now) {
+    let nearest = null;
+    this.pack.forEach((m) => {
+      this.update(m, dt, player, onContact, now);
+      if (!m.dead && (!nearest || m.distanceToPlayer < nearest.distanceToPlayer)) nearest = m;
+    });
+    return nearest;
+  },
+
+  update(m, dt, player, onContact, now) {
+    const tile = m.tile;
+    const maze = m.maze;
     const playerCellX = Math.floor(player.x / tile);
     const playerCellZ = Math.floor(player.z / tile);
 
-    s.distanceToPlayer = Math.hypot(player.x - s.x, player.z - s.z);
-    s.sees = !s.dead && this.clearLine(maze, tile, s.x, s.z, player.x, player.z);
+    m.distanceToPlayer = Math.hypot(player.x - m.x, player.z - m.z);
+    m.sees = !m.dead && this.clearLine(maze, tile, m.x, m.z, player.x, player.z);
 
-    /* ---- dead: topple over, lie there, then come back somewhere else ---- */
-    if (s.dead) {
-      s.respawnIn -= dt;
-      if (s.dying > 0) {
-        s.dying -= dt;
-        const fall = 1 - Math.max(0, s.dying) / 1.1;
-        if (s.inner) {
-          s.inner.rotation.x = -fall * (Math.PI / 2);
-          s.inner.rotation.z = fall * 0.35;
-          s.inner.position.y = (s.baseY || 0) - fall * 0.25;
-        }
-        s.eyeLight.intensity = Math.max(0, 1.4 * (1 - fall));
+    if (m.dead) {
+      m.respawnIn -= dt;
+      if (m.dying > 0) {
+        m.dying -= dt;
+        const fall = 1 - Math.max(0, m.dying) / 1.1;
+        m.inner.rotation.x = -fall * (Math.PI / 2);
+        m.inner.rotation.z = fall * 0.35;
+        m.inner.position.y = m.baseY - fall * 0.25 * (m.kind.height / 2);
+        m.eyeLight.intensity = Math.max(0, 1.4 * (1 - fall));
       } else {
-        s.body.visible = false;
-        s.eyeLight.intensity = 0;
+        m.body.visible = false;
+        m.eyeLight.intensity = 0;
       }
-      if (s.respawnIn <= 0) this.respawn(playerCellX, playerCellZ);
+      if (m.respawnIn <= 0) this.respawn(m, playerCellX, playerCellZ);
       return;
     }
 
-    if (s.flinch > 0) s.flinch -= dt;
+    if (m.flinch > 0) m.flinch -= dt;
 
-    if (s.grace > 0) {
-      s.grace -= dt;
-      this.animate(dt, 0);
+    if (m.grace > 0) {
+      m.grace -= dt;
+      this.animate(m, dt, 0);
       return;
     }
 
-    /* Re-plan a few times a second, and immediately if you change tile. */
-    s.repathIn -= dt;
+    m.repathIn -= dt;
     const playerCell = playerCellZ * maze.width + playerCellX;
-    if (!s.path || s.repathIn <= 0 || s.lastPlayerCell !== playerCell) {
-      const target = this.chooseTarget(s, playerCellX, playerCellZ);
-      s.ambushing = target.ambush;
+    if (!m.path || m.repathIn <= 0 || m.lastPlayerCell !== playerCell) {
+      const target = this.chooseTarget(m, playerCellX, playerCellZ);
+      m.ambushing = target.ambush;
       const field = this.fieldFrom(maze, target.x, target.y);
-      s.path = this.tracePath(maze, field, Math.floor(s.x / tile), Math.floor(s.z / tile), tile);
-      s.lastPlayerCell = playerCell;
-      s.repathIn = 0.25;
+      m.path = this.tracePath(maze, field, Math.floor(m.x / tile), Math.floor(m.z / tile), tile);
+      m.lastPlayerCell = playerCell;
+      m.repathIn = 0.25;
     }
 
-    /* Retire waypoints as they are reached. */
-    while (s.path.length && Math.hypot(s.path[0].x - s.x, s.path[0].z - s.z) < 0.4) {
-      s.path.shift();
-    }
+    while (m.path.length && Math.hypot(m.path[0].x - m.x, m.path[0].z - m.z) < 0.4) m.path.shift();
 
-    /* Aim at the furthest waypoint still in clear line of sight, so it cuts
-       corners and sweeps through junctions instead of stepping tile to tile. */
+    /* Aim at the furthest waypoint still in clear line of sight, so it sweeps
+       through junctions instead of pacing tile centre to tile centre. */
     let aim = null;
-    if (s.path.length) {
-      aim = s.path[0];
-      for (let i = Math.min(s.path.length - 1, 5); i >= 1; i--) {
-        if (this.clearLine(maze, tile, s.x, s.z, s.path[i].x, s.path[i].z)) {
-          aim = s.path[i];
+    if (m.path.length) {
+      aim = m.path[0];
+      for (let i = Math.min(m.path.length - 1, 5); i >= 1; i--) {
+        if (this.clearLine(maze, tile, m.x, m.z, m.path[i].x, m.path[i].z)) {
+          aim = m.path[i];
           break;
         }
       }
-    } else if (s.distanceToPlayer > 0.3) {
-      aim = { x: player.x, z: player.z };   // same tile as you: come straight in
+    } else if (m.distanceToPlayer > 0.3) {
+      aim = { x: player.x, z: player.z };
     }
 
-    /* Charge when it can see you down a corridor; a fresh hit staggers it. */
-    const charging = s.sees && s.distanceToPlayer < 16;
-    const speed = s.speed * (charging ? 1.22 : 1) * (s.flinch > 0 ? 0.25 : 1);
+    const charging = m.sees && m.distanceToPlayer < 16;
+    const speed = m.speed * (charging ? 1.22 : 1) * (m.flinch > 0 ? 0.25 : 1);
 
     let moved = 0;
     if (aim) {
-      const dx = aim.x - s.x;
-      const dz = aim.z - s.z;
+      const dx = aim.x - m.x;
+      const dz = aim.z - m.z;
       const gap = Math.hypot(dx, dz);
       if (gap > 0.001) {
         const step = Math.min(gap, speed * dt);
-        s.x += (dx / gap) * step;
-        s.z += (dz / gap) * step;
+        m.x += (dx / gap) * step;
+        m.z += (dz / gap) * step;
         moved = step / Math.max(dt, 0.0001);
 
         // the model faces +Z, so yaw is atan2(dx, dz)
         const want = Math.atan2(dx, dz);
-        let delta = want - s.yaw;
+        let delta = want - m.yaw;
         while (delta > Math.PI) delta -= Math.PI * 2;
         while (delta < -Math.PI) delta += Math.PI * 2;
-        s.yaw += delta * Math.min(1, dt * 8);
+        m.yaw += delta * Math.min(1, dt * 8);
       }
     }
 
-    s.body.position.set(s.x, 0, s.z);
-    s.body.rotation.y = s.yaw;
+    m.body.position.set(m.x, 0, m.z);
+    m.body.rotation.y = m.yaw;
+    m.eyeLight.intensity = Math.max(0, 1.8 - m.distanceToPlayer * 0.12);
 
-    // eyes glow brighter the closer it gets
-    s.eyeLight.intensity = Math.max(0, 1.8 - s.distanceToPlayer * 0.12);
+    this.animate(m, dt, moved);
 
-    this.animate(dt, moved);
-
-    if (s.distanceToPlayer < this.CATCH_RANGE) onContact();
+    if (m.distanceToPlayer < m.kind.catchRange) onContact(m);
   },
 
   /* Procedural run cycle: legs counter-swing, knees fold on the backstroke,
-     arms mirror the legs, torso bobs, head tracks. */
-  animate(dt, speed) {
-    const s = this.state;
-    const rig = s.rig;
-    const pace = Math.min(1, speed / s.speed);
+     arms mirror the legs, body bobs and leans into the run. */
+  animate(m, dt, speed) {
+    const rig = m.rig;
+    const pace = Math.min(1, speed / m.speed);
 
-    s.phase += dt * (3.4 + pace * 6.5);
-    const t = s.phase;
+    m.phase += dt * (3.4 + pace * 6.5) * (m.kind.height < 1.5 ? 1.5 : 1);
+    const t = m.phase;
     const swing = 0.85 * (0.25 + pace * 0.75);
-
     const legL = Math.sin(t);
     const legR = Math.sin(t + Math.PI);
 
@@ -504,46 +518,46 @@ const Monster = {
     if (rig.HipR) rig.HipR.rotation.x = legR * swing;
     if (rig.LowerLegPivotL) rig.LowerLegPivotL.rotation.x = -Math.max(0, -legL) * swing * 1.5;
     if (rig.LowerLegPivotR) rig.LowerLegPivotR.rotation.x = -Math.max(0, -legR) * swing * 1.5;
-
     if (rig.ShoulderL) rig.ShoulderL.rotation.x = legR * swing * 0.7;
     if (rig.ShoulderR) rig.ShoulderR.rotation.x = legL * swing * 0.7;
     if (rig.ForearmPivotL) rig.ForearmPivotL.rotation.x = -0.5 - Math.max(0, legR) * 0.5;
     if (rig.ForearmPivotR) rig.ForearmPivotR.rotation.x = -0.5 - Math.max(0, legL) * 0.5;
-
-    // gnashing head bob, and a lunge lean when it is right behind you
     if (rig.HeadPivot) {
       rig.HeadPivot.rotation.x = -0.12 + Math.sin(t * 2) * 0.06 * pace;
       rig.HeadPivot.rotation.z = Math.sin(t) * 0.05 * pace;
     }
 
-    if (s.inner) {
-      if (!s.baseY) s.baseY = s.inner.position.y;
-      s.inner.position.y = s.baseY + Math.abs(Math.sin(t)) * 0.07 * pace;
-      s.inner.rotation.x = -0.12 * pace;   // leans into the run
-    }
+    m.inner.position.y = m.baseY + Math.abs(Math.sin(t)) * 0.07 * pace * m.kind.height;
+    m.inner.rotation.x = -0.12 * pace;
   },
 
-  /* Final lunge at the camera when it catches you. */
-  lunge(dt, camera) {
-    const s = this.state;
-    if (!s) return;
-    const dx = camera.position.x - s.x;
-    const dz = camera.position.z - s.z;
+  /* Final lunge at the camera from whichever one got you. */
+  lunge(m, dt, camera) {
+    if (!m) return;
+    const dx = camera.position.x - m.x;
+    const dz = camera.position.z - m.z;
     const gap = Math.hypot(dx, dz) || 1;
     if (gap > 0.55) {
-      s.x += (dx / gap) * dt * 3.4;
-      s.z += (dz / gap) * dt * 3.4;
-      s.body.position.set(s.x, 0, s.z);
+      m.x += (dx / gap) * dt * 3.4;
+      m.z += (dz / gap) * dt * 3.4;
+      m.body.position.set(m.x, 0, m.z);
     }
-    s.yaw = Math.atan2(dx, dz);
-    s.body.rotation.y = s.yaw;
-    s.phase += dt * 18;
-    if (s.rig.HeadPivot) s.rig.HeadPivot.rotation.x = -0.5 + Math.sin(s.phase) * 0.25;
-    s.eyeLight.intensity = 3;
+    m.yaw = Math.atan2(dx, dz);
+    m.body.rotation.y = m.yaw;
+    m.phase += dt * 18;
+    if (m.rig.HeadPivot) m.rig.HeadPivot.rotation.x = -0.5 + Math.sin(m.phase) * 0.25;
+    m.eyeLight.intensity = 3;
   },
 
-  remove(scene) {
-    if (this.state && this.state.body) scene.remove(this.state.body);
-    this.state = null;
+  bodies() {
+    return this.pack.filter((m) => !m.dead).map((m) => m.body);
+  },
+
+  find(body) {
+    return this.pack.find((m) => m.body === body) || null;
+  },
+
+  alive() {
+    return this.pack.filter((m) => !m.dead).length;
   },
 };
