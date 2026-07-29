@@ -71,9 +71,9 @@
   let startTime = 0;
   let elapsed = 0;
   let sizeKey = 'medium';
-  let best = loadBest();
   let deathTimer = 0;
   let stepTimer = 0;
+  let lastEntry = null;      // the run just recorded, so it can be highlighted/renamed
 
   const clock = new THREE.Clock();
 
@@ -104,26 +104,16 @@
     monsterFill: document.getElementById('monster-fill'),
     fireBtn: document.getElementById('fire-btn'),
     reloadBtn: document.getElementById('reload-btn'),
+    boardSize: document.getElementById('board-size'),
+    boardList: document.getElementById('board-list'),
+    boardEmpty: document.getElementById('board-empty'),
+    boardTally: document.getElementById('board-tally'),
+    boardName: document.getElementById('board-name'),
+    boardClear: document.getElementById('board-clear'),
   };
   const mapCtx = el.minimap.getContext('2d');
 
   /* ---------- Records ---------- */
-
-  function loadBest() {
-    try {
-      return JSON.parse(localStorage.getItem('maze-best')) || {};
-    } catch {
-      return {};
-    }
-  }
-
-  function saveBest() {
-    try {
-      localStorage.setItem('maze-best', JSON.stringify(best));
-    } catch {
-      /* storage blocked — keep the record for this session only */
-    }
-  }
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -393,9 +383,15 @@
 
   function showCaughtPanel() {
     Audio3D.silence();
+    lastEntry = null;
+    Scores.recordDeath(sizeKey);
+    const kills = Monster.state ? Monster.state.kills : 0;
     el.title.textContent = '💀 Caught';
-    el.text.innerHTML = `The monster found you after <b>${formatTime(elapsed)}</b>.`;
+    el.text.innerHTML = kills
+      ? `Killed it ${kills} time${kills > 1 ? 's' : ''}, then it got you after <b>${formatTime(elapsed)}</b>.`
+      : `The monster found you after <b>${formatTime(elapsed)}</b>.`;
     el.play.textContent = 'Try again';
+    renderBoard();
     el.overlay.classList.remove('hidden');
     el.overlay.classList.add('overlay--dead');
     el.hud.classList.add('hidden');
@@ -408,18 +404,22 @@
     Audio3D.silence();
     Audio3D.blip('win');
     const seconds = elapsed;
-    const record = best[sizeKey];
-    const isRecord = record === undefined || seconds < record;
-    if (isRecord) {
-      best[sizeKey] = seconds;
-      saveBest();
-    }
+    const kills = Monster.state ? Monster.state.kills : 0;
+    const previousBest = Scores.best(sizeKey);
+    lastEntry = Scores.add(sizeKey, seconds, kills);
     if (document.exitPointerLock) document.exitPointerLock();
 
+    const isRecord = previousBest === null || seconds < previousBest;
+    const killNote = kills ? ` · ${kills} kill${kills > 1 ? 's' : ''}` : '';
+
     el.title.textContent = '🎉 You escaped!';
-    el.text.innerHTML = isRecord
-      ? `<b>${formatTime(seconds)}</b> — a new record for the ${SIZES[sizeKey].label.toLowerCase()} maze.`
-      : `<b>${formatTime(seconds)}</b> · best ${formatTime(record)}`;
+    if (isRecord) {
+      el.text.innerHTML = `<b>${formatTime(seconds)}</b>${killNote} — fastest yet on the ${SIZES[sizeKey].label.toLowerCase()} maze.`;
+    } else if (lastEntry) {
+      el.text.innerHTML = `<b>${formatTime(seconds)}</b>${killNote} — #${lastEntry.rank} on the board.`;
+    } else {
+      el.text.innerHTML = `<b>${formatTime(seconds)}</b>${killNote} · best ${formatTime(previousBest)}`;
+    }
     el.play.textContent = 'New maze';
     el.overlay.classList.remove('hidden');
     el.overlay.classList.remove('overlay--dead');
@@ -428,6 +428,7 @@
     el.danger.style.opacity = '0';
     el.warning.classList.add('hidden');
     renderBest();
+    renderBoard();
   }
 
   function pause() {
@@ -449,8 +450,39 @@
   }
 
   function renderBest() {
-    const record = best[sizeKey];
-    el.bestOut.textContent = record === undefined ? '--:--' : formatTime(record);
+    const record = Scores.best(sizeKey);
+    el.bestOut.textContent = record === null ? '--:--' : formatTime(record);
+  }
+
+  /* ---------- Leaderboard ---------- */
+
+  function renderBoard() {
+    const table = Scores.top(sizeKey);
+    el.boardSize.textContent = SIZES[sizeKey].label;
+    el.boardList.textContent = '';
+    el.boardEmpty.classList.toggle('hidden', table.length > 0);
+
+    const escapes = table.length;
+    const deaths = Scores.deaths(sizeKey);
+    el.boardTally.textContent = escapes || deaths
+      ? `${escapes} escape${escapes === 1 ? '' : 's'} · ${deaths} death${deaths === 1 ? '' : 's'}`
+      : '';
+
+    table.forEach((entry, index) => {
+      const row = document.createElement('li');
+      row.className = 'row';
+      if (entry === lastEntry) row.classList.add('row--new');
+      row.innerHTML = `
+        <span class="row__rank">${index + 1}</span>
+        <span class="row__who"></span>
+        <span class="row__time">${formatTime(entry.time)}</span>
+        <span class="row__kills">${entry.kills ? `${entry.kills}☠` : '—'}</span>`;
+      // set the name as text, never as markup
+      row.querySelector('.row__who').textContent = entry.name || 'Player';
+      el.boardList.appendChild(row);
+    });
+
+    el.boardName.value = Scores.name;
   }
 
   /* ---------- Loop ---------- */
@@ -571,7 +603,37 @@
         other.classList.toggle('on', other === button);
       });
       renderBest();
+      renderBoard();
     });
+  });
+
+  /* Editing the name renames the run you just posted, so a late correction
+     still lands on the right row. */
+  el.boardName.addEventListener('change', () => {
+    Scores.rename(lastEntry, el.boardName.value);
+    renderBoard();
+  });
+  el.boardName.addEventListener('keydown', (event) => {
+    if (event.code === 'Enter') el.boardName.blur();
+    event.stopPropagation();          // do not let R or Escape reach the game
+  });
+
+  el.boardClear.addEventListener('click', () => {
+    if (el.boardClear.dataset.armed) {
+      Scores.clear(sizeKey);
+      lastEntry = null;
+      delete el.boardClear.dataset.armed;
+      el.boardClear.textContent = 'Clear';
+      renderBest();
+      renderBoard();
+      return;
+    }
+    el.boardClear.dataset.armed = '1';
+    el.boardClear.textContent = 'Sure?';
+    setTimeout(() => {
+      delete el.boardClear.dataset.armed;
+      el.boardClear.textContent = 'Clear';
+    }, 2600);
   });
 
   window.addEventListener('keydown', (event) => {
@@ -608,6 +670,8 @@
 
   window.addEventListener('resize', resize);
   resize();
+  Scores.load();
   renderBest();
+  renderBoard();
   frame();
 })();

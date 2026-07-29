@@ -71,6 +71,19 @@
 
       <button id="play" class="play">Enter the maze</button>
 
+      <div id="board">
+        <div class="board__head">
+          <span class="board__title">🏆 Leaderboard · <b id="board-size">Medium</b></span>
+          <button id="board-clear" type="button">Clear</button>
+        </div>
+        <ol id="board-list"></ol>
+        <p id="board-empty" class="board__empty">No escapes yet — get out alive to make the board.</p>
+        <div class="board__foot">
+          <label class="board__name">Name <input id="board-name" type="text" maxlength="14" spellcheck="false"></label>
+          <span id="board-tally"></span>
+        </div>
+      </div>
+
       <ul class="keys">
         <li><b>W A S D</b> move</li>
         <li><b>Mouse</b> look</li>
@@ -93,6 +106,7 @@
   <script src="src/world.js"></script>
   <script src="src/controls.js"></script>
   <script src="src/audio.js"></script>
+  <script src="src/scores.js"></script>
   <script src="src/weapon.js"></script>
   <script src="src/monster.js"></script>
   <script src="src/game.js"></script>
