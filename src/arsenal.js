@@ -12,19 +12,19 @@ const Arsenal = {
       id: 'm4a1', name: 'M4A1', file: 'assets/gun_m4a1.glb',
       mag: 30, damage: 16, pellets: 1, spread: 0.014, delay: 0.09,
       reload: 2, auto: true, headMultiplier: 2, range: 70,
-      view: { width: 0.42, x: 0.2, y: -0.19, z: -0.42 },
+      view: { width: 0.34, x: 0.13, y: -0.15, z: -0.26 },
     },
     {
       id: 'deagle', name: 'Desert Eagle', file: 'assets/gun_deagle.glb',
       mag: 7, damage: 52, pellets: 1, spread: 0.004, delay: 0.34,
       reload: 1.6, auto: false, headMultiplier: 2.6, range: 60,
-      view: { width: 0.3, x: 0.19, y: -0.17, z: -0.3 },
+      view: { width: 0.24, x: 0.12, y: -0.14, z: -0.22 },
     },
     {
       id: 'badger', name: 'Honey Badger', file: 'assets/gun_badger.glb',
       mag: 20, damage: 26, pellets: 1, spread: 0.009, delay: 0.13,
       reload: 1.8, auto: true, headMultiplier: 2.2, range: 80,
-      view: { width: 0.4, x: 0.2, y: -0.18, z: -0.4 },
+      view: { width: 0.32, x: 0.13, y: -0.15, z: -0.25 },
     },
   ],
 

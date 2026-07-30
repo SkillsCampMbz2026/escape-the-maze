@@ -92,11 +92,18 @@ const World = {
     });
   },
 
-  build(THREE, scene, maze, quality, worldDef) {
+  build(THREE, scene, maze, quality, worldDef, levelGroup) {
     const palette = worldDef.palette;
     const wallHeight = worldDef.wallHeight;
     const group = new THREE.Group();
     const created = {};
+
+    /* A world can supply its own geometry instead of a generated maze; the
+       lighting, fog, sky and exit below are shared either way. */
+    if (levelGroup) {
+      group.add(levelGroup);
+      created.walls = levelGroup;
+    }
 
     const stone = new THREE.CanvasTexture(this.stoneTexture(palette));
     stone.wrapS = stone.wrapT = THREE.RepeatWrapping;
@@ -107,35 +114,41 @@ const World = {
     ground.repeat.set(maze.width, maze.height);
     ground.anisotropy = quality.anisotropy;
 
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(maze.width * TILE, maze.height * TILE),
-      new THREE.MeshStandardMaterial({ map: ground, roughness: 0.95, metalness: 0 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set((maze.width * TILE) / 2, 0, (maze.height * TILE) / 2);
-    floor.receiveShadow = quality.shadows;
-    group.add(floor);
-
-    const solidCount = maze.grid.reduce((total, cell) => total + cell, 0);
-    const walls = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(TILE, wallHeight, TILE),
-      new THREE.MeshStandardMaterial({ map: stone, roughness: 0.9, metalness: 0.05 }),
-      solidCount,
-    );
-    walls.castShadow = quality.shadows;
-    walls.receiveShadow = quality.shadows;
-
-    const matrix = new THREE.Matrix4();
-    let index = 0;
-    for (let y = 0; y < maze.height; y++) {
-      for (let x = 0; x < maze.width; x++) {
-        if (!maze.grid[y * maze.width + x]) continue;
-        matrix.makeTranslation(x * TILE + TILE / 2, wallHeight / 2, y * TILE + TILE / 2);
-        walls.setMatrixAt(index++, matrix);
-      }
+    if (!levelGroup) {
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(maze.width * TILE, maze.height * TILE),
+        new THREE.MeshStandardMaterial({ map: ground, roughness: 0.95, metalness: 0 }),
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set((maze.width * TILE) / 2, 0, (maze.height * TILE) / 2);
+      floor.receiveShadow = quality.shadows;
+      group.add(floor);
+      created.floor = floor;
     }
-    walls.instanceMatrix.needsUpdate = true;
-    group.add(walls);
+
+    const solidCount = levelGroup ? 0 : maze.grid.reduce((total, cell) => total + cell, 0);
+    if (!levelGroup) {
+      const walls = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE, wallHeight, TILE),
+        new THREE.MeshStandardMaterial({ map: stone, roughness: 0.9, metalness: 0.05 }),
+        solidCount,
+      );
+      walls.castShadow = quality.shadows;
+      walls.receiveShadow = quality.shadows;
+
+      const matrix = new THREE.Matrix4();
+      let index = 0;
+      for (let y = 0; y < maze.height; y++) {
+        for (let x = 0; x < maze.width; x++) {
+          if (!maze.grid[y * maze.width + x]) continue;
+          matrix.makeTranslation(x * TILE + TILE / 2, wallHeight / 2, y * TILE + TILE / 2);
+          walls.setMatrixAt(index++, matrix);
+        }
+      }
+      walls.instanceMatrix.needsUpdate = true;
+      group.add(walls);
+      created.walls = walls;
+    }
 
     /* the exit */
     const exitPosition = new THREE.Vector3(
@@ -202,8 +215,6 @@ const World = {
     scene.background = sky;
 
     created.group = group;
-    created.walls = walls;
-    created.floor = floor;
     created.portal = portal;
     created.shimmer = shimmer;
     created.exitGlow = exitGlow;

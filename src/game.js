@@ -147,10 +147,22 @@
     const size = SIZES[sizeKey];
     const def = worldDef();
     const scale = def.sizeScale;
-    maze = Maze.generate(Math.round(size.cols * scale), Math.round(size.rows * scale));
+
+    /* A world can either generate a maze or ship its own geometry. World 3 is
+       the Backrooms model, with the grid baked out of the mesh so collision,
+       pathfinding, the minimap and the exit all still work. */
+    let levelGroup = null;
+    if (def.model && Level3.loaded) {
+      const built = Level3.build(THREE, def, TILE);
+      levelGroup = built.group;
+      maze = built.maze;
+    } else {
+      maze = Maze.generate(Math.round(size.cols * scale), Math.round(size.rows * scale));
+    }
+
     distances = Maze.distanceField(maze);
     visited = new Uint8Array(maze.width * maze.height);
-    world = World.build(THREE, scene, maze, quality, def);
+    world = World.build(THREE, scene, maze, quality, def, levelGroup);
 
     torch.color.set(def.palette.torchColor);
     torch.intensity = def.palette.torchPower;
@@ -288,6 +300,20 @@
 
     /* The monster only appears on the map once it is close — knowing exactly
        where it always is would drain the tension out of the chase. */
+    /* Chests, so you know where to run for a gun. Gold while shut, dim once
+       looted — with no weapon these are the only thing worth crossing for. */
+    Arsenal.chests.forEach((chest) => {
+      mapCtx.fillStyle = chest.open ? 'rgba(120,110,80,0.55)' : '#fbbf24';
+      const cx = (chest.x / TILE) * cell;
+      const cz = (chest.z / TILE) * cell;
+      mapCtx.fillRect(cx - 2.5, cz - 2.5, 5, 5);
+      if (!chest.open) {
+        mapCtx.strokeStyle = 'rgba(251,191,36,0.65)';
+        mapCtx.lineWidth = 1;
+        mapCtx.strokeRect(cx - 4.5, cz - 4.5, 9, 9);
+      }
+    });
+
     Monsters.pack.forEach((m) => {
       if (m.dead || m.distanceToPlayer > TILE * 7) return;
       mapCtx.fillStyle = m.variant === 'mini' ? '#fb923c' : '#f87171';
@@ -677,6 +703,9 @@
   Promise.all([
     Monsters.load(THREE, 'assets/blue_monster.glb'),
     Arsenal.load(THREE),
+    Level3.load(THREE, 'assets/world3.glb').catch((e) => {
+      console.warn('backrooms map unavailable, world 3 will fall back to a maze', e);
+    }),
   ]).then(() => {
     Guns.build(THREE, camera);
     el.play.disabled = false;

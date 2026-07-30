@@ -83,8 +83,12 @@ const Worlds = {
     name: 'The Backrooms',
     blurb: 'Endless damp yellow rooms. Unarmed, hunted by a pack, almost no light.',
     tag: 'Impossible',
-    sizeScale: 1.7,
-    wallHeight: 3.2,
+    /* Not a generated maze: this world is the model, laid out in a grid so the
+       rooms go on for a while. The collision grid is baked out of the mesh. */
+    model: 'assets/world3.glb',
+    tiles: 2,
+    sizeScale: 1,
+    wallHeight: 3.4,
     palette: {
       /* the colour everyone remembers: sick yellow wallpaper, damp carpet */
       stoneBase: '#b9a44a',
