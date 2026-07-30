@@ -156,8 +156,16 @@
     let levelGroup = null;
     if (def.model && Level3.loaded) {
       const built = Level3.build(THREE, def, TILE);
-      levelGroup = built.group;
-      maze = built.maze;
+      /* If the bake did not find enough connected floor, the level would be
+         unplayable — you would spawn walled in. Fall back to a generated maze
+         rather than hand over a world nobody can move in. */
+      if (built.maze.reachable >= 30) {
+        levelGroup = built.group;
+        maze = built.maze;
+      } else {
+        console.warn(`world 3 bake only reached ${built.maze.reachable} cells — using a maze instead`);
+        maze = Maze.generate(Math.round(size.cols * 1.6), Math.round(size.rows * 1.6));
+      }
     } else {
       maze = Maze.generate(Math.round(size.cols * scale), Math.round(size.rows * scale));
     }
@@ -205,9 +213,13 @@
     el.chestsLeft.textContent = def.chests || 0;
     el.chestBar.classList.toggle('hidden', !def.chests);
 
-    // face the first open direction so you never start staring at a wall
-    if (!maze.solid(maze.start.x + 1, maze.start.y)) player.yaw = -Math.PI / 2;
+    /* Face an open direction so you never start staring at a wall. Checked in
+       all four directions, since a baked level's start is wherever there
+       happened to be floor rather than a tidy corner. */
+    if (!maze.solid(maze.start.x, maze.start.y - 1)) player.yaw = Math.PI;
+    else if (!maze.solid(maze.start.x + 1, maze.start.y)) player.yaw = -Math.PI / 2;
     else if (!maze.solid(maze.start.x, maze.start.y + 1)) player.yaw = 0;
+    else if (!maze.solid(maze.start.x - 1, maze.start.y)) player.yaw = Math.PI / 2;
 
     el.minimap.width = maze.width * 4;
     el.minimap.height = maze.height * 4;

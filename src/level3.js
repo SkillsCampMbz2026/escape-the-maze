@@ -84,6 +84,13 @@ const Level3 = {
     }
 
     const world = { width: cellW * tiles, depth: cellD * tiles, ceiling: CEILING };
+
+    /* Raycasting reads matrixWorld, and nothing has updated it yet — the group
+       was assembled a moment ago and has never been rendered. Without this
+       every ray misses, no floor is ever found, every cell bakes solid, and
+       you spawn sealed inside a wall. */
+    group.updateMatrixWorld(true);
+
     const maze = this.bake(THREE, group, world, tile);
     return { group, maze, world };
   },
@@ -182,7 +189,15 @@ const Level3 = {
       for (let i = 0; i < grid.length; i++) if (!grid[i] && field[i] < 0) grid[i] = 1;
     }
 
+    /* Count what is actually reachable from the start, not merely open. */
+    let reachable = 0;
+    if (open.length) {
+      const field = Level3.spread(maze, maze.start.x, maze.start.y);
+      for (let i = 0; i < field.length; i++) if (field[i] >= 0) reachable += 1;
+    }
     maze.openCount = open.length;
+    maze.reachable = reachable;
+    console.log(`world 3 bake: ${width}x${height} grid, ${open.length} open, ${reachable} reachable`);
     return maze;
   },
 
