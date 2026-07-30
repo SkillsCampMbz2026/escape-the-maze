@@ -52,8 +52,8 @@ const Level3 = {
     }
 
     const CEILING = 3.4;
-    const scale = CEILING / Math.max(0.001, size.y);
-    const tiles = def.tiles || 2;
+    const scale = (CEILING / Math.max(0.001, size.y)) * (def.modelScale || 1);
+    const tiles = def.tiles || 1;
 
     /* --- lay the same rooms out in a grid, which is the endless part --- */
     const cellW = size.x * scale;
@@ -83,7 +83,11 @@ const Level3 = {
       }
     }
 
-    const world = { width: cellW * tiles, depth: cellD * tiles, ceiling: CEILING };
+    const world = {
+      width: cellW * tiles,
+      depth: cellD * tiles,
+      ceiling: size.y * scale,
+    };
 
     /* Raycasting reads matrixWorld, and nothing has updated it yet — the group
        was assembled a moment ago and has never been rendered. Without this
@@ -178,7 +182,25 @@ const Level3 = {
     const open = [];
     for (let i = 0; i < grid.length; i++) if (!grid[i]) open.push(i);
     if (open.length) {
-      const first = open[0];
+      /* Start in the middle of a room, not wherever the scan happened to find
+         floor first — a cell with open neighbours on every side guarantees
+         somewhere to walk the moment the game begins. */
+      let first = open[0];
+      let bestRoom = -1;
+      open.forEach((i) => {
+        const x = i % width;
+        const y = (i / width) | 0;
+        let room = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!maze.solid(x + dx, y + dy)) room += 1;
+          }
+        }
+        if (room > bestRoom) {
+          bestRoom = room;
+          first = i;
+        }
+      });
       maze.start = { x: first % width, y: (first / width) | 0 };
       const field = Level3.spread(maze, maze.start.x, maze.start.y);
       let best = first;

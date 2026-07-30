@@ -127,7 +127,7 @@ const Arsenal = {
      a long hunt while a pack chased you unarmed. Instead each chest aims at a
      share of the way out: the first is close enough to reach in the head start,
      the last is a proper trek. */
-  place(THREE, scene, maze, tile, count, fromStart) {
+  place(THREE, scene, maze, tile, count, fromStart, options = {}) {
     this.clear(scene);
     if (!this.chestModel) return this.chests;
 
@@ -137,18 +137,22 @@ const Arsenal = {
       for (let x = 1; x < maze.width - 1; x++) {
         if (maze.grid[y * maze.width + x]) continue;
         const distance = fromStart[y * maze.width + x];
-        if (distance < 4) continue;            // never right on top of you
+        if (distance < 2) continue;            // not underneath your feet
         open.push({ x, y, distance });
         if (distance > furthest) furthest = distance;
       }
     }
     if (!open.length) return this.chests;
 
-    /* Bands at roughly a fifth, half and three quarters of the way out. */
+    /* Bands at roughly a fifth, half and three quarters of the way out. The
+       first chest is put a couple of tiles from the spawn instead, so you are
+       armed before anything reaches you. */
     const bands = [0.2, 0.45, 0.72, 0.9, 1];
     const chosen = [];
     for (let i = 0; i < count && open.length; i++) {
-      const target = furthest * bands[Math.min(i, bands.length - 1)];
+      const target = i === 0 && options.firstAtStart
+        ? 2.5
+        : furthest * bands[Math.min(i, bands.length - 1)];
       let best = null;
       let bestScore = Infinity;
       open.forEach((cell) => {
@@ -156,7 +160,9 @@ const Arsenal = {
         let score = Math.abs(cell.distance - target);
         chosen.forEach((taken) => {
           const gap = Math.abs(taken.x - cell.x) + Math.abs(taken.y - cell.y);
-          if (gap < 12) score += (12 - gap) * 2;
+          // the spawn chest is meant to be close, so it is exempt from spacing
+          const room = chosen.length === 1 && options.firstAtStart ? 6 : 12;
+          if (gap < room) score += (room - gap) * 2;
         });
         if (score < bestScore) {
           bestScore = score;

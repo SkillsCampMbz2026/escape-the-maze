@@ -86,9 +86,15 @@ const Worlds = {
     /* Not a generated maze: this world is the model, laid out in a grid so the
        rooms go on for a while. The collision grid is baked out of the mesh. */
     model: 'assets/world3.glb',
-    tiles: 2,
+    /* One copy scaled up rather than a grid of copies: the rooms were never
+       authored to tile, so the seams and overlapping walls looked wrong. */
+    tiles: 1,
+    modelScale: 1.7,
     sizeScale: 1,
     wallHeight: 3.4,
+    /* An interior lit by a directional sun looks nothing like the Backrooms —
+       it is fluorescent strips and no windows. */
+    noSun: true,
     palette: {
       /* the colour everyone remembers: sick yellow wallpaper, damp carpet */
       stoneBase: '#b9a44a',
@@ -98,16 +104,16 @@ const Worlds = {
       groundSeam: 'rgba(40,30,10,0.35)',
       sky: ['#3a3418', '#6b5f24', '#a2913c'],
       stars: false,
-      fog: 0x40391a,
-      fogDensity: 0.1,          // you can barely see to the next corner
-      hemiSky: 0xd8c76a,
-      hemiGround: 0x2a2410,
-      hemiPower: 0.5,
+      fog: 0x5a4f24,
+      fogDensity: 0.035,        // enough haze for dread, not so much you are blind
+      hemiSky: 0xffeaa0,
+      hemiGround: 0x6b5b28,
+      hemiPower: 1.15,          // the flat overhead glow the place is known for
       sunColor: 0xfff0b0,
-      sunPower: 0.25,
-      torchColor: 0xfff2c0,
-      torchPower: 0.85,
-      torchRange: 9,            // the smallest pool of light in the game
+      sunPower: 0,
+      torchColor: 0xfff6d4,
+      torchPower: 1.35,
+      torchRange: 15,
       portal: 0xf1f5f9,
       portalGlow: 0xffffff,
     },

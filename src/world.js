@@ -190,12 +190,27 @@ const World = {
     /* lighting */
     group.add(new THREE.HemisphereLight(palette.hemiSky, palette.hemiGround, palette.hemiPower));
 
+    if (worldDef.noSun) {
+      /* An interior gets no sun. A few overhead lamps down the space read as
+         the flickering fluorescents the place is known for. */
+      const spread = Math.max(maze.width, maze.height) * TILE;
+      for (let i = 0; i < 6; i++) {
+        const lamp = new THREE.PointLight(palette.torchColor, 0.85, spread * 0.22, 2);
+        lamp.position.set(
+          ((i % 3) + 0.5) * (maze.width * TILE) / 3,
+          wallHeight - 0.4,
+          (Math.floor(i / 3) + 0.5) * (maze.height * TILE) / 2,
+        );
+        group.add(lamp);
+      }
+    }
+
     const sun = new THREE.DirectionalLight(palette.sunColor, palette.sunPower);
     sun.position.set(maze.width * TILE * 0.3, 40, -maze.height * TILE * 0.2);
     sun.target.position.set((maze.width * TILE) / 2, 0, (maze.height * TILE) / 2);
     group.add(sun.target);
 
-    if (quality.shadows) {
+    if (quality.shadows && !worldDef.noSun) {
       sun.castShadow = true;
       sun.shadow.mapSize.set(quality.shadowMap, quality.shadowMap);
       const span = Math.max(maze.width, maze.height) * TILE * 0.6;

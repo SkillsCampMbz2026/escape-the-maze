@@ -170,6 +170,18 @@
       maze = Maze.generate(Math.round(size.cols * scale), Math.round(size.rows * scale));
     }
 
+    /* Whatever the level came from, the ring around the spawn is forced open.
+       A baked grid can misjudge a cell and seal you in; being able to walk on
+       the first frame matters more than a perfectly faithful wall. */
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const cx = maze.start.x + dx;
+        const cy = maze.start.y + dy;
+        if (cx <= 0 || cy <= 0 || cx >= maze.width - 1 || cy >= maze.height - 1) continue;
+        maze.grid[cy * maze.width + cx] = 0;
+      }
+    }
+
     distances = Maze.distanceField(maze);
     visited = new Uint8Array(maze.width * maze.height);
     world = World.build(THREE, scene, maze, quality, def, levelGroup);
@@ -208,15 +220,18 @@
     Arsenal.clear(scene);
     if (def.chests) {
       const fromStart = Monsters.fieldFrom(maze, maze.start.x, maze.start.y);
-      Arsenal.place(THREE, scene, maze, TILE, def.chests, fromStart);
+      Arsenal.place(THREE, scene, maze, TILE, def.chests, fromStart, { firstAtStart: true });
     }
     el.chestsLeft.textContent = def.chests || 0;
     el.chestBar.classList.toggle('hidden', !def.chests);
 
-    /* Face an open direction so you never start staring at a wall. Checked in
-       all four directions, since a baked level's start is wherever there
-       happened to be floor rather than a tidy corner. */
-    if (!maze.solid(maze.start.x, maze.start.y - 1)) player.yaw = Math.PI;
+    /* Look at the first chest if there is one, so the gun is the first thing
+       you see. Otherwise face any open direction rather than a wall — checked
+       on all four sides, since a baked start is wherever there was floor. */
+    const firstChest = Arsenal.chests[0];
+    if (firstChest) {
+      player.yaw = Math.atan2(-(firstChest.x - player.x), -(firstChest.z - player.z));
+    } else if (!maze.solid(maze.start.x, maze.start.y - 1)) player.yaw = Math.PI;
     else if (!maze.solid(maze.start.x + 1, maze.start.y)) player.yaw = -Math.PI / 2;
     else if (!maze.solid(maze.start.x, maze.start.y + 1)) player.yaw = 0;
     else if (!maze.solid(maze.start.x - 1, maze.start.y)) player.yaw = Math.PI / 2;
