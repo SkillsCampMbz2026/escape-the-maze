@@ -481,6 +481,56 @@ html, body {
 }
 
 .worlds em.brutal { color: #2a0505; background: #f87171; }
+.worlds em.impossible {
+  color: #f8fafc;
+  background: linear-gradient(90deg, #7f1d1d, #b45309);
+  box-shadow: 0 0 12px rgba(180, 83, 9, 0.6);
+}
+
+/* ---------- Chests ---------- */
+#chest-prompt {
+  position: absolute;
+  left: 50%; top: 58%;
+  transform: translateX(-50%);
+  padding: 7px 15px;
+  font-size: 0.8rem;
+  background: rgba(10, 14, 30, 0.72);
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+#chest-prompt b { color: var(--amber); }
+
+#chest-bar {
+  position: absolute;
+  left: 50%; top: 12px;
+  transform: translateX(-50%);
+  padding: 5px 13px;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: rgba(10, 14, 30, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+#chest-bar b { color: var(--amber); font-size: 0.86rem; }
+
+#toast {
+  position: absolute;
+  left: 50%; top: 66%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fde68a;
+  background: rgba(10, 14, 30, 0.8);
+  border: 1px solid rgba(253, 230, 138, 0.5);
+  border-radius: 999px;
+  white-space: nowrap;
+}
 
 .slots {
   display: flex;

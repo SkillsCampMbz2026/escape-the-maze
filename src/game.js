@@ -105,6 +105,11 @@
     kills: document.getElementById('kills'),
     hitmarker: document.getElementById('hitmarker'),
     hurt: document.getElementById('hurt'),
+    gunName: document.getElementById('gun-name'),
+    prompt: document.getElementById('chest-prompt'),
+    chestBar: document.getElementById('chest-bar'),
+    chestsLeft: document.getElementById('chests-left'),
+    toast: document.getElementById('toast'),
     monsterBar: document.getElementById('monster-bar'),
     monsterFill: document.getElementById('monster-fill'),
     monsterName: document.getElementById('monster-name'),
@@ -174,8 +179,17 @@
     player.health = 100;
     player.hurtCooldown = 0;
     player.kick = 0;
-    Guns.reset();
+    Guns.reset(def.startArmed !== false);
     el.kills.textContent = '0';
+
+    /* Chests, in the worlds that make you go looking for a gun. */
+    Arsenal.clear(scene);
+    if (def.chests) {
+      const fromStart = Monsters.fieldFrom(maze, maze.start.x, maze.start.y);
+      Arsenal.place(THREE, scene, maze, TILE, def.chests, fromStart);
+    }
+    el.chestsLeft.textContent = def.chests || 0;
+    el.chestBar.classList.toggle('hidden', !def.chests);
 
     // face the first open direction so you never start staring at a wall
     if (!maze.solid(maze.start.x + 1, maze.start.y)) player.yaw = -Math.PI / 2;
@@ -322,6 +336,13 @@
 
   /* ---------- Combat ---------- */
 
+  function statusFlash(text) {
+    el.toast.textContent = text;
+    el.toast.classList.remove('hidden');
+    clearTimeout(statusFlash.timer);
+    statusFlash.timer = setTimeout(() => el.toast.classList.add('hidden'), 1800);
+  }
+
   function flashHitmarker(headshot) {
     el.hitmarker.classList.toggle('hitmarker--head', headshot);
     el.hitmarker.classList.remove('hidden');
@@ -407,10 +428,16 @@
     }
   }
 
+  /* The slot row grows as you find guns, rather than being fixed at three. */
   function renderGun() {
-    el.gunName.textContent = Guns.spec.name;
-    el.gunSlots.querySelectorAll('span').forEach((slot, i) => {
-      slot.classList.toggle('on', i === Guns.current);
+    el.gunName.textContent = Guns.armed ? Guns.spec.name : 'Bare hands';
+    el.gunSlots.textContent = '';
+    Guns.owned.forEach((id, index) => {
+      const slot = document.createElement('span');
+      slot.textContent = String(index + 1);
+      if (index === Guns.current) slot.className = 'on';
+      slot.title = Arsenal.spec(id) ? Arsenal.spec(id).name : id;
+      el.gunSlots.appendChild(slot);
     });
   }
 
@@ -587,7 +614,25 @@
       el.health.style.width = `${player.health}%`;
       el.healthText.textContent = player.health;
       el.health.classList.toggle('health--low', player.health <= 34);
-      el.ammo.textContent = Guns.reloading > 0 ? 'RELOADING' : `${Guns.rounds} / ${Guns.magSize}`;
+      /* Chests: glow, prompt, and the E key. */
+      Arsenal.animate(dt);
+      const chest = Arsenal.nearest(player.x, player.z);
+      el.prompt.classList.toggle('hidden', !chest);
+      if (chest && Controls.keys.KeyE) {
+        const spec = Arsenal.loot(chest, Guns.owned);
+        Audio3D.blip('reload');
+        if (spec) {
+          Guns.give(spec.id);
+          statusFlash(`Found the ${spec.name}`);
+        } else {
+          statusFlash('Empty');
+        }
+        el.chestsLeft.textContent = Arsenal.chests.filter((c) => !c.open).length;
+      }
+
+      el.ammo.textContent = !Guns.armed ? 'UNARMED'
+        : Guns.reloading > 0 ? 'RELOADING' : `${Guns.rounds} / ${Guns.magSize}`;
+      el.gunName.textContent = Guns.armed ? Guns.spec.name : 'Bare hands';
 
       const gap = Math.hypot(player.x - world.exitPosition.x, player.z - world.exitPosition.z);
       if (gap < 1.6) win();
@@ -622,21 +667,25 @@
   /* ---------- Wiring ---------- */
 
   Controls.init(canvas);
-  Guns.build(THREE, camera);
   Controls.onLockChange = (locked) => {
     if (!locked && mode === 'playing' && !coarse) pause();
   };
 
-  /* The model has to be in before a run can start. */
+  /* Monster, guns and chest all have to be in before a run can start. */
   el.play.disabled = true;
-  el.play.textContent = 'Waking the monster…';
-  Monsters.load(THREE, 'assets/blue_monster.glb').then(() => {
+  el.play.textContent = 'Loading…';
+  Promise.all([
+    Monsters.load(THREE, 'assets/blue_monster.glb'),
+    Arsenal.load(THREE),
+  ]).then(() => {
+    Guns.build(THREE, camera);
     el.play.disabled = false;
     el.play.textContent = 'Enter the maze';
   }).catch((error) => {
-    console.error('monster failed to load', error);
+    console.error('assets failed to load', error);
+    Guns.build(THREE, camera);
     el.play.disabled = false;
-    el.play.textContent = 'Enter the maze (no monsters)';
+    el.play.textContent = 'Enter the maze';
   });
 
   el.play.addEventListener('click', () => {

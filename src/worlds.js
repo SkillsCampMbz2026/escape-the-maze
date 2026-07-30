@@ -2,7 +2,7 @@
    maze gets and what is hunting you in it. */
 
 const Worlds = {
-  order: ['w1', 'w2'],
+  order: ['w1', 'w2', 'w3'],
 
   w1: {
     id: 'w1',
@@ -37,6 +37,9 @@ const Worlds = {
     hunter: { small: 3.9, medium: 4.5, large: 5.1 },
     grace: { small: 5, medium: 4, large: 3.5 },
     intercept: { small: false, medium: true, large: true },
+    /* World 1 hands you a rifle. Later worlds make you find one. */
+    startArmed: true,
+    chests: 0,
   },
 
   w2: {
@@ -71,5 +74,46 @@ const Worlds = {
     hunter: { small: 4.4, medium: 5.0, large: 5.5 },
     grace: { small: 4, medium: 3.2, large: 2.8 },
     intercept: { small: true, medium: true, large: true },
+    startArmed: false,
+    chests: 3,
+  },
+
+  w3: {
+    id: 'w3',
+    name: 'The Backrooms',
+    blurb: 'Endless damp yellow rooms. Unarmed, hunted by a pack, almost no light.',
+    tag: 'Impossible',
+    sizeScale: 1.7,
+    wallHeight: 3.2,
+    palette: {
+      /* the colour everyone remembers: sick yellow wallpaper, damp carpet */
+      stoneBase: '#b9a44a',
+      stoneBlock: [150, 34],
+      stoneMortar: 'rgba(90,70,20,0.5)',
+      ground: '#7d6a2c',
+      groundSeam: 'rgba(40,30,10,0.35)',
+      sky: ['#3a3418', '#6b5f24', '#a2913c'],
+      stars: false,
+      fog: 0x40391a,
+      fogDensity: 0.1,          // you can barely see to the next corner
+      hemiSky: 0xd8c76a,
+      hemiGround: 0x2a2410,
+      hemiPower: 0.5,
+      sunColor: 0xfff0b0,
+      sunPower: 0.25,
+      torchColor: 0xfff2c0,
+      torchPower: 0.85,
+      torchRange: 9,            // the smallest pool of light in the game
+      portal: 0xf1f5f9,
+      portalGlow: 0xffffff,
+    },
+    /* Four hunters and five runts, all fast, in the biggest maze, with a
+       three second head start and no gun until you find a chest. */
+    pack: { big: 4, mini: 5 },
+    hunter: { small: 5.2, medium: 5.6, large: 6.0 },
+    grace: { small: 3, medium: 2.6, large: 2.2 },
+    intercept: { small: true, medium: true, large: true },
+    startArmed: false,
+    chests: 3,
   },
 };

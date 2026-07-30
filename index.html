@@ -25,6 +25,9 @@
 
     <div id="reticle"></div>
     <div id="hitmarker" class="hidden"></div>
+    <div id="toast" class="hidden"></div>
+    <div id="chest-prompt" class="hidden">Press <b>E</b> to open the chest</div>
+    <div id="chest-bar" class="hidden">Chests left <b id="chests-left">3</b></div>
 
     <div id="monster-bar" class="hidden">
       <span class="monster-bar__label" id="monster-name">Hunter</span>
@@ -82,8 +85,13 @@
         </button>
         <button data-world="w2">
           <b>World 2 · The Foundry</b>
-          <i>Molten dark · 2 hunters + 3 runts · bigger maze</i>
+          <i>Molten dark · 2 hunters + 3 runts · find a gun in a chest</i>
           <em class="brutal">Brutal</em>
+        </button>
+        <button data-world="w3">
+          <b>World 3 · The Backrooms</b>
+          <i>Unarmed, 9 of them, almost no light, biggest maze</i>
+          <em class="impossible">Impossible</em>
         </button>
       </div>
 
@@ -133,6 +141,7 @@
   <script src="src/controls.js"></script>
   <script src="src/audio.js"></script>
   <script src="src/scores.js"></script>
+  <script src="src/arsenal.js"></script>
   <script src="src/weapon.js"></script>
   <script src="src/monster.js"></script>
   <script src="src/game.js"></script>

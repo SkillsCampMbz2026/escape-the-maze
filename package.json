@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "@gltf-transform/cli": "^4.4.2"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true
+  }
+}
