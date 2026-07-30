@@ -121,35 +121,44 @@ const Arsenal = {
 
   /* ---------- Chests in the level ---------- */
 
-  /* Put `count` chests in open cells, spread out and away from the start. */
+  /* Put `count` chests in open cells.
+
+     They used to go to the furthest reachable cells, which made the first gun
+     a long hunt while a pack chased you unarmed. Instead each chest aims at a
+     share of the way out: the first is close enough to reach in the head start,
+     the last is a proper trek. */
   place(THREE, scene, maze, tile, count, fromStart) {
     this.clear(scene);
     if (!this.chestModel) return this.chests;
 
     const open = [];
+    let furthest = 1;
     for (let y = 1; y < maze.height - 1; y++) {
       for (let x = 1; x < maze.width - 1; x++) {
         if (maze.grid[y * maze.width + x]) continue;
         const distance = fromStart[y * maze.width + x];
-        if (distance < 6) continue;            // never right on top of you
+        if (distance < 4) continue;            // never right on top of you
         open.push({ x, y, distance });
+        if (distance > furthest) furthest = distance;
       }
     }
     if (!open.length) return this.chests;
 
+    /* Bands at roughly a fifth, half and three quarters of the way out. */
+    const bands = [0.2, 0.45, 0.72, 0.9, 1];
     const chosen = [];
     for (let i = 0; i < count && open.length; i++) {
-      /* Score by distance from the start and from chests already placed, so
-         they end up scattered rather than clustered in one corridor. */
+      const target = furthest * bands[Math.min(i, bands.length - 1)];
       let best = null;
-      let bestScore = -Infinity;
+      let bestScore = Infinity;
       open.forEach((cell) => {
-        let score = cell.distance;
+        // closeness to the target distance, plus a push away from other chests
+        let score = Math.abs(cell.distance - target);
         chosen.forEach((taken) => {
           const gap = Math.abs(taken.x - cell.x) + Math.abs(taken.y - cell.y);
-          score -= Math.max(0, 30 - gap) * 3;
+          if (gap < 12) score += (12 - gap) * 2;
         });
-        if (score > bestScore) {
+        if (score < bestScore) {
           bestScore = score;
           best = cell;
         }
@@ -165,12 +174,33 @@ const Arsenal = {
       rig.rotation.y = Math.random() * Math.PI * 2;
       scene.add(rig);
 
-      const glow = new THREE.PointLight(0xffd76b, 1.1, 7, 2);
-      glow.position.set(rig.position.x, 1.2, rig.position.z);
+      const glow = new THREE.PointLight(0xffd76b, 2.2, 14, 2);
+      glow.position.set(rig.position.x, 1.3, rig.position.z);
       scene.add(glow);
 
+      /* A pillar of light, the same trick the exit uses: walls hide the chest
+         itself, but you can see this over the top of them from a corridor away. */
+      const beacon = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.3, 24, 10, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0xffc53d, transparent: true, opacity: 0.2,
+          side: THREE.DoubleSide, depthWrite: false,
+        }),
+      );
+      beacon.position.set(rig.position.x, 12, rig.position.z);
+      scene.add(beacon);
+
+      /* and a slowly turning ring at head height, which reads as "loot here" */
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.75, 0.045, 8, 28),
+        new THREE.MeshBasicMaterial({ color: 0xffd76b, transparent: true, opacity: 0.75 }),
+      );
+      halo.rotation.x = Math.PI / 2;
+      halo.position.set(rig.position.x, 1.7, rig.position.z);
+      scene.add(halo);
+
       this.chests.push({
-        rig, glow, cell, index,
+        rig, glow, beacon, halo, cell, index,
         x: rig.position.x, z: rig.position.z,
         open: false, lid: 0,
       });
@@ -206,17 +236,28 @@ const Arsenal = {
     return pool[Math.floor(Math.random() * pool.length)];
   },
 
-  /* Lid swings up, light fades out. */
+  /* Lid swings up, then the beacon and ring go out so you can tell at a glance
+     which ones you have already been to. */
   animate(dt) {
+    const now = performance.now();
     this.chests.forEach((chest) => {
-      if (chest.open && chest.lid < 1) {
-        chest.lid = Math.min(1, chest.lid + dt * 2.2);
-        chest.rig.rotation.x = -chest.lid * 0.12;
-        chest.rig.position.y = chest.lid * 0.05;
-        chest.glow.intensity = 1.1 * (1 - chest.lid);
-      } else if (!chest.open) {
-        chest.glow.intensity = 0.9 + Math.sin(performance.now() * 0.004 + chest.index) * 0.35;
+      if (chest.open) {
+        if (chest.lid < 1) {
+          chest.lid = Math.min(1, chest.lid + dt * 2.2);
+          chest.rig.rotation.x = -chest.lid * 0.12;
+          chest.rig.position.y = chest.lid * 0.05;
+        }
+        const fade = 1 - chest.lid;
+        chest.glow.intensity = 2.2 * fade;
+        chest.beacon.material.opacity = 0.2 * fade;
+        chest.halo.material.opacity = 0.75 * fade;
+        chest.halo.visible = fade > 0.02;
+        return;
       }
+      chest.glow.intensity = 1.9 + Math.sin(now * 0.004 + chest.index) * 0.5;
+      chest.halo.rotation.z = now * 0.0012 + chest.index;
+      chest.halo.position.y = 1.7 + Math.sin(now * 0.002 + chest.index) * 0.14;
+      chest.beacon.material.opacity = 0.16 + Math.sin(now * 0.003 + chest.index) * 0.06;
     });
   },
 
@@ -224,6 +265,8 @@ const Arsenal = {
     this.chests.forEach((chest) => {
       scene.remove(chest.rig);
       scene.remove(chest.glow);
+      scene.remove(chest.beacon);
+      scene.remove(chest.halo);
     });
     this.chests = [];
   },

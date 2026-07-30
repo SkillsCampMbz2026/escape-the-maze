@@ -506,17 +506,33 @@ html, body {
   position: absolute;
   left: 50%; top: 12px;
   transform: translateX(-50%);
-  padding: 5px 13px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 14px;
   font-size: 0.66rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
-  background: rgba(10, 14, 30, 0.6);
-  border: 1px solid var(--line);
+  background: rgba(10, 14, 30, 0.66);
+  border: 1px solid rgba(251, 191, 36, 0.45);
   border-radius: 999px;
+  white-space: nowrap;
 }
 
 #chest-bar b { color: var(--amber); font-size: 0.86rem; }
+
+/* the arrow is rotated in JS, so it needs its own transform origin */
+#chest-arrow {
+  display: inline-block;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--amber);
+  transform-origin: 50% 50%;
+  transition: transform 0.1s linear, opacity 0.2s linear;
+}
+
+.chest-bar__left { padding-left: 4px; border-left: 1px solid var(--line); }
 
 #toast {
   position: absolute;

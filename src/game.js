@@ -109,6 +109,8 @@
     prompt: document.getElementById('chest-prompt'),
     chestBar: document.getElementById('chest-bar'),
     chestsLeft: document.getElementById('chests-left'),
+    chestDist: document.getElementById('chest-dist'),
+    chestArrow: document.getElementById('chest-arrow'),
     toast: document.getElementById('toast'),
     monsterBar: document.getElementById('monster-bar'),
     monsterFill: document.getElementById('monster-fill'),
@@ -361,6 +363,38 @@
   }
 
   /* ---------- Combat ---------- */
+
+  /* Points at the closest unopened chest and says how far. Straight-line
+     rather than around the corridors — it is a hint, not a route. */
+  function renderChestFinder() {
+    const shut = Arsenal.chests.filter((c) => !c.open);
+    if (!shut.length) {
+      el.chestDist.textContent = 'all found';
+      el.chestArrow.style.opacity = '0.25';
+      return;
+    }
+
+    let best = shut[0];
+    let bestGap = Infinity;
+    shut.forEach((chest) => {
+      const gap = Math.hypot(chest.x - player.x, chest.z - player.z);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = chest;
+      }
+    });
+
+    el.chestDist.textContent = `${Math.round(bestGap)}m`;
+    el.chestArrow.style.opacity = '1';
+
+    /* Turn the arrow into the player's frame: 0 means dead ahead. */
+    const toChest = Math.atan2(best.x - player.x, best.z - player.z);
+    const facing = Math.atan2(-Math.sin(player.yaw), -Math.cos(player.yaw));
+    let delta = toChest - facing;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    el.chestArrow.style.transform = `rotate(${(-delta * 180) / Math.PI}deg)`;
+  }
 
   function statusFlash(text) {
     el.toast.textContent = text;
@@ -640,8 +674,9 @@
       el.health.style.width = `${player.health}%`;
       el.healthText.textContent = player.health;
       el.health.classList.toggle('health--low', player.health <= 34);
-      /* Chests: glow, prompt, and the E key. */
+      /* Chests: glow, prompt, the E key, and a pointer to the nearest one. */
       Arsenal.animate(dt);
+      renderChestFinder();
       const chest = Arsenal.nearest(player.x, player.z);
       el.prompt.classList.toggle('hidden', !chest);
       if (chest && Controls.keys.KeyE) {
