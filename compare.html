@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>World 3 comparison harness</title>
+  <style>
+    html, body { margin: 0; background: #000; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="view" width="900" height="560"></canvas>
+
+  <script src="vendor/three.min.js"></script>
+  <script src="vendor/GLTFLoader.js"></script>
+  <script src="src/maze.js"></script>
+  <script src="src/level3.js"></script>
+  <script>
+  /* Renders either the original model or the generated maze from a matched
+     eye-level viewpoint, so the two can be put side by side. Driven from
+     Puppeteer: ?mode=original or ?mode=generated, then window.shot() resolves
+     once the frame is on screen. */
+  (async () => {
+    const THREE = window.THREE;
+    const mode = new URLSearchParams(location.search).get('mode') || 'original';
+
+    const canvas = document.getElementById('view');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(1);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(76, 900 / 560, 0.1, 400);
+
+    /* Same lighting for both, so differences are the geometry and textures
+       rather than the lights. */
+    scene.add(new THREE.HemisphereLight(0xffeaa0, 0x6b5b28, 0.8));
+    const torch = new THREE.PointLight(0xfff6d4, 1.35, 15, 2);
+    camera.add(torch);
+    scene.add(camera);
+
+    let target = null;
+
+    if (mode === 'original') {
+      const gltf = await new Promise((res, rej) =>
+        new THREE.GLTFLoader().load('assets/world3.glb', res, undefined, rej));
+      const model = gltf.scene;
+      const probe = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      probe.getSize(size);
+      // authored Z-up: the smallest axis is the height
+      if (size.z < size.x && size.z < size.y) model.rotation.x = -Math.PI / 2;
+      scene.add(model);
+      model.updateMatrixWorld(true);
+
+      const box = new THREE.Box3().setFromObject(model);
+      const span = new THREE.Vector3();
+      box.getSize(span);
+      window.__info = {
+        mode, width: +span.x.toFixed(2), height: +span.y.toFixed(2), depth: +span.z.toFixed(2),
+        floorY: +box.min.y.toFixed(2),
+      };
+      /* stand inside it at eye height, looking down its long axis */
+      camera.position.set(box.min.x + span.x * 0.15, box.min.y + 1.62, box.min.z + span.z * 0.5);
+      camera.lookAt(box.max.x, box.min.y + 1.62, box.min.z + span.z * 0.5);
+      target = model;
+    } else {
+      await Level3.load(THREE, 'assets/world3.glb');
+      const built = Level3.build(THREE, { cols: 15, rows: 15, ceiling: Level3.CEILING }, 3);
+      scene.add(built.group);
+      built.group.updateMatrixWorld(true);
+      window.__info = {
+        mode, ceiling: built.world.ceiling,
+        width: built.world.width, depth: built.world.depth,
+        reachable: built.maze.reachable,
+      };
+      /* stand in the start cell at eye height, looking down a corridor */
+      const maze = built.maze;
+      const sx = maze.start.x * 3 + 1.5;
+      const sz = maze.start.y * 3 + 1.5;
+      camera.position.set(sx, 1.62, sz);
+      // look toward the first open neighbour
+      let lx = sx + 6;
+      let lz = sz;
+      if (!maze.solid(maze.start.x, maze.start.y + 1)) { lx = sx; lz = sz + 6; }
+      camera.lookAt(lx, 1.62, lz);
+      target = built.group;
+    }
+
+    renderer.render(scene, camera);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    renderer.render(scene, camera);
+    window.__ready = true;
+    void target;
+  })().catch((e) => {
+    window.__error = String(e && e.message ? e.message : e);
+    window.__ready = true;
+  });
+  </script>
+</body>
+</html>
