@@ -83,15 +83,15 @@ const Worlds = {
     name: 'The Backrooms',
     blurb: 'Endless damp yellow rooms. Unarmed, hunted by a pack, almost no light.',
     tag: 'Impossible',
-    /* Not a generated maze: this world is the model, laid out in a grid so the
-       rooms go on for a while. The collision grid is baked out of the mesh. */
+    /* The file is a reference, not the level: its wall, carpet, ceiling, lamp
+       and door materials are harvested and applied to a maze generated on an
+       exact grid, at the same 4.1 ceiling and a similar floor area. */
     model: 'assets/world3.glb',
-    /* One copy scaled up rather than a grid of copies: the rooms were never
-       authored to tile, so the seams and overlapping walls looked wrong. */
-    tiles: 1,
-    modelScale: 1.7,
+    cols: 15,
+    rows: 15,
+    ceiling: 4.1,
     sizeScale: 1,
-    wallHeight: 3.4,
+    wallHeight: 4.1,
     /* An interior lit by a directional sun looks nothing like the Backrooms —
        it is fluorescent strips and no windows. */
     noSun: true,
@@ -108,7 +108,7 @@ const Worlds = {
       fogDensity: 0.035,        // enough haze for dread, not so much you are blind
       hemiSky: 0xffeaa0,
       hemiGround: 0x6b5b28,
-      hemiPower: 1.15,          // the flat overhead glow the place is known for
+      hemiPower: 0.8,           // the ceiling lamps do most of the work now
       sunColor: 0xfff0b0,
       sunPower: 0,
       torchColor: 0xfff6d4,

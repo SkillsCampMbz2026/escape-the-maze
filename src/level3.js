@@ -1,229 +1,123 @@
-/* World 3 built from the Backrooms model itself, not a generated maze.
+/* World 3: a maze I generate, dressed in the Backrooms model's own materials.
 
-   Everything else in the game works off a grid: collision, the monsters'
-   breadth-first pathfinding, the minimap, and where the exit goes. An imported
-   mesh has no grid, so one is baked from it at load:
+   Using the model's geometry directly did not work. Collision, the monsters'
+   pathfinding, the minimap and the exit all run off a grid, and a grid baked
+   out of an arbitrary mesh is only ever approximately right — cells that look
+   open but are not, walls you can see through, and no way to guarantee a
+   walkable spawn.
 
-     - the model is tiled so the rooms actually go on for a while, which is the
-       whole point of the place
-     - a cell is walkable if there is floor under its centre and headroom above
-     - two cells are connected if a chest-height ray between their centres is
-       clear, and a cell with no connections is walled off
-
-   The result is handed back in exactly the shape Maze.generate produces, so
-   nothing downstream needs to know the difference. */
+   So the file is used as a reference instead of as level geometry. Its
+   materials are harvested by name (Wall_1..4, Moquette_1..4 for the carpet,
+   Ceiling_1..4, Ceiling_Lamp, Exit_Door, Exit_Sign) and applied to geometry
+   built on an exact grid, at the same ceiling height and floor area as the
+   original. The look and the format carry over; the weirdness does not. */
 
 const Level3 = {
-  scene: null,          // the loaded model, kept for cloning
   loaded: false,
+  tex: null,
+
+  /* Measured from the file: 81.5 x 20.6 of floor under a 4.1 ceiling. The maze
+     is squared off to a similar area rather than copying the long thin strip,
+     which plays better while staying the same size and complexity. */
+  CEILING: 4.1,
+  COLS: 15,
+  ROWS: 15,
 
   load(THREE, url) {
     this.THREE = THREE;
     return new Promise((resolve, reject) => {
       new THREE.GLTFLoader().load(url, (gltf) => {
-        this.scene = gltf.scene;
-        this.loaded = true;
+        this.tex = this.harvest(THREE, gltf.scene);
+        this.loaded = Boolean(this.tex.wall.length);
+        /* The geometry has done its job; only the textures are kept. */
+        gltf.scene.traverse((o) => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
         resolve(this);
       }, undefined, reject);
     });
   },
 
-  /* ---------- Build ---------- */
+  /* Pull the base colour maps out by material name. */
+  harvest(THREE, scene) {
+    const found = { wall: [], carpet: [], ceiling: [], lamp: null, door: null, sign: null };
 
-  build(THREE, def, tile) {
-    const source = this.scene;
-    const group = new THREE.Group();
+    scene.traverse((object) => {
+      const materials = object.material
+        ? (Array.isArray(object.material) ? object.material : [object.material])
+        : [];
+      materials.forEach((material) => {
+        const map = material.map;
+        const name = material.name || '';
+        if (!map) return;
+        if (/^Wall_/i.test(name)) found.wall.push(map);
+        else if (/^Moquette/i.test(name)) found.carpet.push(map);
+        else if (/^Ceiling_Lamp/i.test(name)) found.lamp = map;
+        else if (/^Ceiling_/i.test(name)) found.ceiling.push(map);
+        else if (/Exit_Door/i.test(name)) found.door = map;
+        else if (/Exit_Sign/i.test(name)) found.sign = map;
+      });
+    });
 
-    /* --- orientation and scale ---
-       The file measures 81.5 x 20.6 x 4.1, so the smallest axis is the height
-       and it was authored Z-up. Turn it Y-up, then scale so the ceiling sits at
-       a sensible height for a 1.62 tall player. */
-    const probe = new THREE.Group();
-    const model = source.clone(true);
-    probe.add(model);
-    let box = new THREE.Box3().setFromObject(probe);
-    let size = new THREE.Vector3();
-    box.getSize(size);
-
-    if (size.y > size.z && size.z < size.x) {
-      model.rotation.x = -Math.PI / 2;      // Z-up source
-      box = new THREE.Box3().setFromObject(probe);
-      box.getSize(size);
-    }
-
-    const CEILING = 3.4;
-    const scale = (CEILING / Math.max(0.001, size.y)) * (def.modelScale || 1);
-    const tiles = def.tiles || 1;
-
-    /* --- lay the same rooms out in a grid, which is the endless part --- */
-    const cellW = size.x * scale;
-    const cellD = size.z * scale;
-
-    for (let tz = 0; tz < tiles; tz++) {
-      for (let tx = 0; tx < tiles; tx++) {
-        const copy = source.clone(true);
-        copy.rotation.x = model.rotation.x;
-        const holder = new THREE.Group();
-        holder.add(copy);
-        holder.scale.setScalar(scale);
-        // sit each copy flush against its neighbours, floor at y = 0
-        holder.position.set(
-          tx * cellW - box.min.x * scale,
-          -box.min.y * scale,
-          tz * cellD - box.min.z * scale,
-        );
-        holder.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = false;        // the ceiling would shadow everything
-            o.receiveShadow = true;
-            o.frustumCulled = true;
-          }
-        });
-        group.add(holder);
-      }
-    }
-
-    const world = {
-      width: cellW * tiles,
-      depth: cellD * tiles,
-      ceiling: size.y * scale,
-    };
-
-    /* Raycasting reads matrixWorld, and nothing has updated it yet — the group
-       was assembled a moment ago and has never been rendered. Without this
-       every ray misses, no floor is ever found, every cell bakes solid, and
-       you spawn sealed inside a wall. */
-    group.updateMatrixWorld(true);
-
-    const maze = this.bake(THREE, group, world, tile);
-    return { group, maze, world };
+    return found;
   },
 
-  /* ---------- Baking the grid ---------- */
+  /* A texture per surface, so each can repeat at its own rate. Cloning shares
+     the decoded image, so this costs nothing but a wrapper. */
+  tile(THREE, map, repeatX, repeatY) {
+    if (!map) return null;
+    const copy = map.clone();
+    copy.wrapS = THREE.RepeatWrapping;
+    copy.wrapT = THREE.RepeatWrapping;
+    copy.repeat.set(repeatX, repeatY);
+    copy.needsUpdate = true;
+    return copy;
+  },
 
-  bake(THREE, group, world, tile) {
-    const width = Math.max(4, Math.floor(world.width / tile));
-    const height = Math.max(4, Math.floor(world.depth / tile));
-    const grid = new Uint8Array(width * height).fill(1);
-    const ray = new THREE.Raycaster();
-    const down = new THREE.Vector3(0, -1, 0);
-    const origin = new THREE.Vector3();
-    const meshes = [];
-    group.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  /* ---------- The maze ----------
+     A perfect maze is corridors and dead ends. The Backrooms is open rooms
+     joined by doorways, so rooms are carved into it afterwards and a few walls
+     knocked through, which turns dead ends into loops. */
+  generate(cols, rows) {
+    const maze = Maze.generate(cols, rows);
+    const { grid, width, height } = maze;
+    const inside = (x, y) => x > 0 && y > 0 && x < width - 1 && y < height - 1;
 
-    const centre = (i) => i * tile + tile / 2;
-    const floors = new Float32Array(width * height).fill(-1);
-
-    /* pass 1: is there floor under this cell, with headroom above it? */
-    for (let z = 0; z < height; z++) {
-      for (let x = 0; x < width; x++) {
-        origin.set(centre(x), world.ceiling - 0.15, centre(z));
-        ray.set(origin, down);
-        ray.far = world.ceiling + 1;
-        const hits = ray.intersectObjects(meshes, false);
-        if (!hits.length) continue;
-        const floor = hits[hits.length - 1].point.y;   // lowest surface in the column
-        if (floor > 1.2) continue;                     // standing on furniture, not floor
-        floors[z * width + x] = floor;
-        grid[z * width + x] = 0;                       // provisionally open
+    const rooms = Math.max(4, Math.round((cols * rows) / 26));
+    for (let r = 0; r < rooms; r++) {
+      const cx = 2 + Math.floor(Math.random() * (width - 4));
+      const cy = 2 + Math.floor(Math.random() * (height - 4));
+      const halfW = 1 + Math.floor(Math.random() * 2);
+      const halfH = 1 + Math.floor(Math.random() * 2);
+      for (let y = cy - halfH; y <= cy + halfH; y++) {
+        for (let x = cx - halfW; x <= cx + halfW; x++) {
+          if (inside(x, y)) grid[y * width + x] = 0;
+        }
       }
     }
 
-    /* pass 2: a cell you cannot actually walk into from anywhere is not open.
-       Chest-height rays between neighbouring centres decide that, which also
-       catches the walls the downward pass cannot see. */
-    const dir = new THREE.Vector3();
-    const link = (ax, az, bx, bz) => {
-      const ay = floors[az * width + ax] + 1.1;
-      const from = new THREE.Vector3(centre(ax), ay, centre(az));
-      const to = new THREE.Vector3(centre(bx), floors[bz * width + bx] + 1.1, centre(bz));
-      dir.copy(to).sub(from);
-      const span = dir.length();
-      ray.set(from, dir.normalize());
-      ray.far = span - 0.05;
-      return ray.intersectObjects(meshes, false).length === 0;
-    };
+    /* knock through a few walls so the place loops back on itself */
+    const holes = Math.round(cols * rows * 0.08);
+    for (let h = 0; h < holes; h++) {
+      const x = 1 + Math.floor(Math.random() * (width - 2));
+      const y = 1 + Math.floor(Math.random() * (height - 2));
+      if (inside(x, y)) grid[y * width + x] = 0;
+    }
 
-    const links = new Uint8Array(width * height);
-    for (let z = 0; z < height; z++) {
-      for (let x = 0; x < width; x++) {
-        if (grid[z * width + x]) continue;
-        let count = 0;
-        if (x + 1 < width && !grid[z * width + x + 1] && link(x, z, x + 1, z)) count++;
-        if (x > 0 && !grid[z * width + x - 1] && link(x, z, x - 1, z)) count++;
-        if (z + 1 < height && !grid[(z + 1) * width + x] && link(x, z, x, z + 1)) count++;
-        if (z > 0 && !grid[(z - 1) * width + x] && link(x, z, x, z - 1)) count++;
-        links[z * width + x] = count;
+    /* Start and exit as far apart as the result allows. */
+    const field = this.spread(maze, 1, 1);
+    if (field[1 * width + 1] < 0) grid[1 * width + 1] = 0;
+    let best = 1 * width + 1;
+    let bestScore = -1;
+    for (let i = 0; i < field.length; i++) {
+      if (field[i] > bestScore) {
+        bestScore = field[i];
+        best = i;
       }
     }
-    for (let i = 0; i < grid.length; i++) {
-      if (!grid[i] && links[i] === 0) grid[i] = 1;     // isolated: treat as wall
-    }
-
-    /* border is always solid, so nobody walks off the edge of the world */
-    for (let x = 0; x < width; x++) {
-      grid[x] = 1;
-      grid[(height - 1) * width + x] = 1;
-    }
-    for (let z = 0; z < height; z++) {
-      grid[z * width] = 1;
-      grid[z * width + width - 1] = 1;
-    }
-
-    const maze = {
-      grid, width, height, cols: width, rows: height,
-      solid: (x, y) => (x < 0 || y < 0 || x >= width || y >= height ? 1 : grid[y * width + x]),
-      start: { x: 1, y: 1 },
-      exit: { x: width - 2, y: height - 2 },
-    };
-
-    /* Start and exit have to be real open cells, and as far apart as the baked
-       space allows — the corners almost certainly are not open. */
-    const open = [];
-    for (let i = 0; i < grid.length; i++) if (!grid[i]) open.push(i);
-    if (open.length) {
-      /* Start in the middle of a room, not wherever the scan happened to find
-         floor first — a cell with open neighbours on every side guarantees
-         somewhere to walk the moment the game begins. */
-      let first = open[0];
-      let bestRoom = -1;
-      open.forEach((i) => {
-        const x = i % width;
-        const y = (i / width) | 0;
-        let room = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (!maze.solid(x + dx, y + dy)) room += 1;
-          }
-        }
-        if (room > bestRoom) {
-          bestRoom = room;
-          first = i;
-        }
-      });
-      maze.start = { x: first % width, y: (first / width) | 0 };
-      const field = Level3.spread(maze, maze.start.x, maze.start.y);
-      let best = first;
-      let bestScore = -1;
-      open.forEach((i) => { if (field[i] > bestScore) { bestScore = field[i]; best = i; } });
-      maze.exit = { x: best % width, y: (best / width) | 0 };
-      /* Anything the start cannot reach is scenery, not level. */
-      for (let i = 0; i < grid.length; i++) if (!grid[i] && field[i] < 0) grid[i] = 1;
-    }
-
-    /* Count what is actually reachable from the start, not merely open. */
-    let reachable = 0;
-    if (open.length) {
-      const field = Level3.spread(maze, maze.start.x, maze.start.y);
-      for (let i = 0; i < field.length; i++) if (field[i] >= 0) reachable += 1;
-    }
-    maze.openCount = open.length;
-    maze.reachable = reachable;
-    console.log(`world 3 bake: ${width}x${height} grid, ${open.length} open, ${reachable} reachable`);
+    maze.start = { x: 1, y: 1 };
+    maze.exit = { x: best % width, y: (best / width) | 0 };
     return maze;
   },
 
-  /* Breadth-first reach, used to place the exit and prune unreachable rooms. */
   spread(maze, x0, y0) {
     const field = new Int32Array(maze.width * maze.height).fill(-1);
     const start = y0 * maze.width + x0;
@@ -246,5 +140,159 @@ const Level3 = {
       }
     }
     return field;
+  },
+
+  /* ---------- Geometry ---------- */
+
+  build(THREE, def, tile) {
+    const maze = this.generate(def.cols || this.COLS, def.rows || this.ROWS);
+    const { grid, width, height } = maze;
+    const ceiling = def.ceiling || this.CEILING;
+    const group = new THREE.Group();
+    const tex = this.tex;
+
+    const spanX = width * tile;
+    const spanZ = height * tile;
+
+    /* --- carpet: one plane per variant, in bands, so the floor is patchy the
+       way the original is rather than one flat repeat --- */
+    const carpets = tex.carpet.length ? tex.carpet : tex.wall;
+    const bands = Math.min(carpets.length, 4) || 1;
+    for (let b = 0; b < bands; b++) {
+      const depth = spanZ / bands;
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(spanX, depth),
+        new THREE.MeshStandardMaterial({
+          map: this.tile(THREE, carpets[b % carpets.length], width, Math.ceil(height / bands)),
+          roughness: 0.95,
+        }),
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set(spanX / 2, 0, depth * (b + 0.5));
+      floor.receiveShadow = true;
+      group.add(floor);
+    }
+
+    /* --- ceiling, the thing that makes it feel indoors --- */
+    const ceilings = tex.ceiling.length ? tex.ceiling : carpets;
+    const lid = new THREE.Mesh(
+      new THREE.PlaneGeometry(spanX, spanZ),
+      new THREE.MeshStandardMaterial({
+        map: this.tile(THREE, ceilings[0], width, height),
+        roughness: 0.9,
+        side: THREE.FrontSide,
+      }),
+    );
+    lid.rotation.x = Math.PI / 2;
+    lid.position.set(spanX / 2, ceiling, spanZ / 2);
+    group.add(lid);
+
+    /* --- walls: one instanced mesh per wall texture, cells assigned by a hash
+       so the variants scatter instead of banding --- */
+    const walls = tex.wall.length ? tex.wall : ceilings;
+    const buckets = walls.map(() => []);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (!grid[y * width + x]) continue;
+        buckets[(x * 7 + y * 13) % buckets.length].push({ x, y });
+      }
+    }
+
+    const matrix = new THREE.Matrix4();
+    buckets.forEach((cells, index) => {
+      if (!cells.length) return;
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(tile, ceiling, tile),
+        new THREE.MeshStandardMaterial({
+          map: this.tile(THREE, walls[index % walls.length], 1, 1),
+          roughness: 0.85,
+        }),
+        cells.length,
+      );
+      cells.forEach((cell, i) => {
+        matrix.makeTranslation(cell.x * tile + tile / 2, ceiling / 2, cell.y * tile + tile / 2);
+        mesh.setMatrixAt(i, matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      if (index === 0) group.userData.walls = mesh;
+    });
+
+    /* --- doorways: where an open cell is pinched between two walls, frame it.
+       The frame sits above head height, so it changes the look and not the
+       collision, which stays exactly the grid. --- */
+    const doorMap = tex.door || walls[0];
+    const doorMaterial = new THREE.MeshStandardMaterial({
+      map: this.tile(THREE, doorMap, 1, 1), roughness: 0.7,
+    });
+    const HEAD = 2.25;
+    let doors = 0;
+    for (let y = 1; y < height - 1 && doors < 40; y++) {
+      for (let x = 1; x < width - 1 && doors < 40; x++) {
+        if (grid[y * width + x]) continue;
+        const eastWest = grid[y * width + x - 1] && grid[y * width + x + 1];
+        const northSouth = grid[(y - 1) * width + x] && grid[(y + 1) * width + x];
+        if (!eastWest && !northSouth) continue;
+        if (Math.random() > 0.35) continue;
+
+        const lintel = new THREE.Mesh(
+          new THREE.BoxGeometry(
+            northSouth ? tile * 0.3 : tile, ceiling - HEAD, northSouth ? tile : tile * 0.3,
+          ),
+          doorMaterial,
+        );
+        lintel.position.set(
+          x * tile + tile / 2, HEAD + (ceiling - HEAD) / 2, y * tile + tile / 2,
+        );
+        group.add(lintel);
+        doors += 1;
+      }
+    }
+
+    /* --- ceiling lamps: the flat sourceless glow the place is known for --- */
+    const lampMap = tex.lamp || ceilings[0];
+    const lampMaterial = new THREE.MeshBasicMaterial({
+      map: this.tile(THREE, lampMap, 1, 1), color: 0xfff6d8,
+    });
+    let lamps = 0;
+    for (let y = 2; y < height - 1; y += 4) {
+      for (let x = 2; x < width - 1; x += 4) {
+        if (grid[y * width + x]) continue;
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(tile * 0.6, tile * 0.6), lampMaterial);
+        panel.rotation.x = Math.PI / 2;
+        panel.position.set(x * tile + tile / 2, ceiling - 0.04, y * tile + tile / 2);
+        group.add(panel);
+
+        if (lamps < 14) {
+          const bulb = new THREE.PointLight(0xffeec2, 0.75, tile * 5.5, 2);
+          bulb.position.set(x * tile + tile / 2, ceiling - 0.5, y * tile + tile / 2);
+          group.add(bulb);
+          lamps += 1;
+        }
+      }
+    }
+
+    /* --- an exit sign over the way out, straight off the original --- */
+    if (tex.sign) {
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 0.7),
+        new THREE.MeshBasicMaterial({ map: this.tile(THREE, tex.sign, 1, 1), transparent: true }),
+      );
+      sign.position.set(
+        maze.exit.x * tile + tile / 2, ceiling - 0.9, maze.exit.y * tile + tile / 2,
+      );
+      group.add(sign);
+      const glow = new THREE.PointLight(0x7dd3fc, 1.4, 10, 2);
+      glow.position.copy(sign.position);
+      group.add(glow);
+    }
+
+    maze.reachable = this.spread(maze, maze.start.x, maze.start.y)
+      .reduce((total, v) => total + (v >= 0 ? 1 : 0), 0);
+    console.log(`world 3: ${width}x${height} grid, ${maze.reachable} reachable, ${doors} doorways`);
+
+    return { group, maze, world: { width: spanX, depth: spanZ, ceiling } };
   },
 };
